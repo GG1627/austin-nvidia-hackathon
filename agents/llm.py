@@ -5,14 +5,19 @@ PRIMARY (proposer):    Nemotron, served via an OpenAI-compatible vLLM/NIM
                         endpoint. One batch call per consolidation pass —
                         unconsolidated episodes + active insights in,
                         structured JSON out.
-CALIBRATE (2nd model):  Featherless AI. Re-runs the same batch of proposed/
-                        supported insights to independently agree or
-                        disagree — dual agreement earns the faster 0.20
+CALIBRATE (2nd model):  A second, independently-hosted model served via
+                        self-hosted vLLM. Re-runs the same batch of
+                        proposed/supported insights to independently agree
+                        or disagree — dual agreement earns the faster 0.20
                         support factor instead of 0.15 (see consolidation.py).
 
-Both clients degrade to an empty result when their API key isn't set, so
-tests and offline demos still run end to end (deterministic code in
-consolidation.py never depends on the LLM being reachable).
+Both PRIMARY and CALIBRATE degrade to an empty result when their endpoint
+isn't configured, so tests and offline demos still run end to end
+(deterministic code in consolidation.py never depends on the LLM being
+reachable). PRIMARY is gated on an API key (NVIDIA NIM requires one);
+CALIBRATE is gated on its base URL being set, since a self-hosted vLLM
+server typically runs with no auth at all — set VLLM_CALIBRATE_API_KEY
+only if you started vLLM with --api-key.
 """
 from __future__ import annotations
 import os
@@ -22,23 +27,22 @@ NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
 NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
 NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.1-nemotron-70b-instruct")
 
-FEATHERLESS_API_KEY = os.getenv("FEATHERLESS_API_KEY", "")
-FEATHERLESS_BASE_URL = os.getenv("FEATHERLESS_BASE_URL", "https://api.featherless.ai/v1")
-FEATHERLESS_MODEL = os.getenv("FEATHERLESS_MODEL", "Qwen/Qwen2.5-72B-Instruct")
+# Self-hosted vLLM instance serving the calibration model, e.g.:
+#   vllm serve Qwen/Qwen2.5-7B-Instruct --port 8001
+VLLM_CALIBRATE_BASE_URL = os.getenv("VLLM_CALIBRATE_BASE_URL", "")
+VLLM_CALIBRATE_MODEL = os.getenv("VLLM_CALIBRATE_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+VLLM_CALIBRATE_API_KEY = os.getenv("VLLM_CALIBRATE_API_KEY", "")
 
 
 def _chat(base_url: str, api_key: str, model: str, messages: list, max_tokens: int = 1024) -> str:
     """Send an OpenAI-compatible chat-completion request; return the content string."""
-    if not api_key:
-        return ""
-
     import httpx
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     r = httpx.post(
-        f"{base_url}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        f"{base_url.rstrip('/')}/chat/completions",
+        headers=headers,
         json={
             "model": model,
             "messages": messages,
@@ -123,11 +127,12 @@ well-supported generalisation. Do not assume the other model was right. Reply wi
 
 def calibrate_batch(candidates: list[dict]) -> dict[int, bool]:
     """
-    Run the same batch of support candidates through Featherless AI (spec section 8, step 5).
-    Returns {candidate_index: agreed_bool}; missing/failed entries default to False, which
-    keeps the slower single-model 0.15 support factor.
+    Run the same batch of support candidates through the second, independently-hosted
+    vLLM model (spec section 8, step 5). Returns {candidate_index: agreed_bool};
+    missing/failed entries default to False, which keeps the slower single-model
+    0.15 support factor.
     """
-    if not FEATHERLESS_API_KEY or not candidates:
+    if not VLLM_CALIBRATE_BASE_URL or not candidates:
         return {}
 
     payload = [
@@ -139,9 +144,9 @@ def calibrate_batch(candidates: list[dict]) -> dict[int, bool]:
         {"role": "user", "content": json.dumps(payload)},
     ]
     try:
-        raw = _chat(FEATHERLESS_BASE_URL, FEATHERLESS_API_KEY, FEATHERLESS_MODEL, messages, max_tokens=1024)
+        raw = _chat(VLLM_CALIBRATE_BASE_URL, VLLM_CALIBRATE_API_KEY, VLLM_CALIBRATE_MODEL, messages, max_tokens=1024)
         data = json.loads(_strip_fences(raw))
         return {a["index"]: bool(a.get("agree", False)) for a in data.get("agreements", [])}
     except Exception as exc:  # noqa: BLE001
-        print(f"[llm] Featherless calibration call failed: {exc}")
+        print(f"[llm] vLLM calibration call failed: {exc}")
         return {}

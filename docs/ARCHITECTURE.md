@@ -163,8 +163,8 @@ austin-nvidia-hackathon/
 ├── agents/
 │   ├── models.py               # Agent 1: frozen payload contracts + table dataclasses
 │   ├── db.py                   # Agent 1: Supabase REST client
-│   ├── embeddings.py           # Agent 1: Featherless embeddings + cosine helpers
-│   ├── llm.py                  # Agent 1: Nemotron proposer + Featherless calibration
+│   ├── embeddings.py           # Agent 1: vLLM embeddings + cosine helpers
+│   ├── llm.py                  # Agent 1: Nemotron proposer + vLLM calibration
 │   ├── consolidation.py        # Agent 1: batch consolidation engine
 │   ├── memory.py               # Agent 1: log_episode() / get_context()
 │   ├── onboarding.py           # Agent 1: onboarding bootstrap

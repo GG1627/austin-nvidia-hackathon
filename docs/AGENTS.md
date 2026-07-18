@@ -48,8 +48,8 @@ onboarding-only `onboarding_finding` shape) are frozen in
 
 Runs whenever unconsolidated episodes exist (NemoClaw heartbeat), plus once
 immediately after onboarding. One batch call to Nemotron (via vLLM)
-proposes `new_hypotheses` / `evidence_updates` / `contradictions`; a second
-Featherless call calibrates the same batch. All confidence math and
+proposes `new_hypotheses` / `evidence_updates` / `contradictions`; a second,
+self-hosted vLLM model calibrates the same batch. All confidence math and
 lifecycle promotion after that is deterministic code — the LLM proposes,
 the code disposes:
 

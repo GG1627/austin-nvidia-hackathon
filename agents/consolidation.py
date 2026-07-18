@@ -185,7 +185,7 @@ def run_consolidation(run_id: Optional[int] = None, onboarding: bool = False) ->
             contradict_updates.append({"row": row, "episode_id": c.get("episode_id")})
 
     # 3. Calibrate every "support" candidate (dedup merges + explicit support updates) as one
-    #    Featherless batch, per spec section 8 step 5.
+    #    vLLM batch, per spec section 8 step 5.
     calibration_pool: list[dict] = []
     calibration_meta: list[tuple[str, dict]] = []
     for sc in support_candidates:

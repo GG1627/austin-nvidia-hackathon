@@ -24,8 +24,8 @@
   /agents
     models.py                # Agent 1: frozen payload contracts + table dataclasses
     db.py                    # Agent 1: Supabase REST client
-    embeddings.py            # Agent 1: Featherless embeddings + cosine helpers
-    llm.py                   # Agent 1: Nemotron proposer + Featherless calibration
+    embeddings.py            # Agent 1: vLLM embeddings + cosine helpers
+    llm.py                   # Agent 1: Nemotron proposer + vLLM calibration
     consolidation.py         # Agent 1: batch consolidation engine
     memory.py                # Agent 1: log_episode() / get_context()
     onboarding.py            # Agent 1: onboarding bootstrap
@@ -61,7 +61,7 @@
   `new_hypotheses` / `evidence_updates` / `contradictions`; deterministic code
   applies confidence math and lifecycle promotion (`agents/consolidation.py`)
 - [x] Implement pgvector dedup (merge as evidence above ~0.90 cosine similarity)
-- [x] Implement Featherless dual-model calibration for the faster support factor
+- [x] Implement self-hosted vLLM dual-model calibration for the faster support factor
 - [x] Implement volatility-based expiry for trend-derived insights
 - [x] Unit test: math + onboarding + dedup, offline (`tests/test_memory_layer.py`)
 

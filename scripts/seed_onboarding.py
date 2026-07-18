@@ -7,12 +7,12 @@ onboarding_finding data, runs the onboarding bootstrap (spec section 4),
 and prints the resulting get_context() so you can see run 1 already looks
 like a grounded strategist opinion instead of a cold start.
 
-Requires a real Supabase project with db/schema.sql applied:
-    export SUPABASE_URL=...
-    export SUPABASE_SERVICE_KEY=...
+Requires a real Supabase project with db/schema.sql applied. Reads
+credentials from a .env file in the repo root (see .env.example), or from
+already-exported environment variables:
     python scripts/seed_onboarding.py
 
-NVIDIA_API_KEY / FEATHERLESS_API_KEY are optional — without them the
+NVIDIA_API_KEY / VLLM_CALIBRATE_BASE_URL / VLLM_EMBEDDING_BASE_URL are optional — without them the
 consolidation LLM calls degrade to no-ops, so this proves the deterministic
 plumbing (episodes, entity graph, get_context) end to end even before the
 model keys are wired up.
@@ -23,6 +23,9 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from agents.models import OnboardingFindingPayload
 from agents.onboarding import run_onboarding

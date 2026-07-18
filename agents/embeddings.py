@@ -1,10 +1,10 @@
 """
-Agent 1 - Embedding client via Featherless AI (OpenAI-compatible).
-Falls back to a zero-vector stub when FEATHERLESS_API_KEY is not set
-so unit tests and offline runs work without live credentials.
+Agent 1 - Embedding client via a self-hosted vLLM instance (OpenAI-compatible
+/v1/embeddings). Falls back to a zero-vector stub when VLLM_EMBEDDING_BASE_URL
+isn't set, so unit tests and offline runs work without a live GPU box.
 
 EMBEDDING_DIM must match db/schema.sql's `vector(1024)` columns — if you
-change EMBEDDING_MODEL to something with a different output dimension,
+change VLLM_EMBEDDING_MODEL to something with a different output dimension,
 update the schema's vector(1024) columns (and reindex) to match.
 """
 from __future__ import annotations
@@ -12,29 +12,29 @@ import json
 import os
 from typing import List, Union
 
-FEATHERLESS_API_KEY = os.getenv("FEATHERLESS_API_KEY", "")
-FEATHERLESS_BASE_URL = os.getenv(
-    "FEATHERLESS_BASE_URL", "https://api.featherless.ai/v1"
-)
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5")
+# Self-hosted vLLM instance serving an embedding model, e.g.:
+#   vllm serve Qwen/Qwen3-Embedding-0.6B --port 8002 --task embed
+VLLM_EMBEDDING_BASE_URL = os.getenv("VLLM_EMBEDDING_BASE_URL", "")
+VLLM_EMBEDDING_MODEL = os.getenv("VLLM_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B")
+VLLM_EMBEDDING_API_KEY = os.getenv("VLLM_EMBEDDING_API_KEY", "")
 EMBEDDING_DIM = 1024
 
 
 def embed(text: str) -> List[float]:
     """Return an EMBEDDING_DIM-dim embedding vector for *text*."""
-    if not FEATHERLESS_API_KEY:
-        # Stub: deterministic zero vector for offline tests
+    if not VLLM_EMBEDDING_BASE_URL:
+        # Stub: deterministic zero vector for offline tests / no vLLM server yet.
         return [0.0] * EMBEDDING_DIM
 
     try:
         import httpx
+        headers = {"Content-Type": "application/json"}
+        if VLLM_EMBEDDING_API_KEY:
+            headers["Authorization"] = f"Bearer {VLLM_EMBEDDING_API_KEY}"
         r = httpx.post(
-            f"{FEATHERLESS_BASE_URL}/embeddings",
-            headers={
-                "Authorization": f"Bearer {FEATHERLESS_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={"model": EMBEDDING_MODEL, "input": text},
+            f"{VLLM_EMBEDDING_BASE_URL.rstrip('/')}/embeddings",
+            headers=headers,
+            json={"model": VLLM_EMBEDDING_MODEL, "input": text},
             timeout=20,
         )
         r.raise_for_status()

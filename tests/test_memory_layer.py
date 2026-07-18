@@ -11,7 +11,7 @@ Covers spec section 11's test plan:
     math, duplicates merge instead of duplicating, and promotion to `core`
     only fires after run 1 (never during onboarding).
 
-No live NVIDIA/Featherless/Supabase credentials are required — the LLM
+No live NVIDIA/vLLM/Supabase credentials are required — the LLM
 proposal/calibration calls and the Supabase client are mocked, matching
 how the LLM was already mocked in the project's original Agent 1 tests.
 
