@@ -4,67 +4,84 @@
 
 ---
 
-## Agent 1 — Creator Intelligence Agent
+## Agent 1 — Memory & Knowledge Layer
 
 **Role:** Long-term memory brain  
 **Owner:** Memory & Knowledge Engineer  
-**File:** `agents/agent1_memory.py`
+**Files:** `agents/models.py`, `db.py`, `embeddings.py`, `llm.py`, `consolidation.py`, `memory.py`, `onboarding.py`
 
 ### Purpose
-Acts as the persistent knowledge layer of the system. Does not just store facts — it stores **conclusions**.
+Owns the persistent knowledge layer: an append-only episodic log, a
+consolidation engine that turns episodes into confidence-scored insights,
+and a plain-SQL entity graph — all in Supabase/pgvector. Does not scrape
+sources, score opportunities, or talk to the creator; it learns from what
+Agents 2 and 3 log, and serves them context back through two interfaces.
 
 ### What It Knows
-- Creator profile (niche, audience, style, goals)
-- Every content item ever analyzed (title, views, retention, topics)
-- Learned patterns derived from performance data
-- Content ideas and their research status
-- Failed topics and why they failed
-- Creator preferences and biases
-- Historical acceptance/rejection of recommendations
+- `episodes` — append-only, immutable raw log of every observation,
+  recommendation, outcome, feedback item, research finding, and onboarding
+  finding, each with an embedding
+- `insights` — learned conclusions with category, confidence, lifecycle
+  status (`hypothesis` → `validated` → `core`, or `deprecated`), evidence
+  counters, and pointers to supporting episodes
+- `nodes` / `edges` — a plain two-table entity graph (creator, topic,
+  video, audience_segment, opportunity nodes; typed weighted edges)
 
-### Core Methods
+### Public Interfaces (the only door into this layer)
 
 ```python
-class CreatorMemoryAgent:
-    def get_creator_context() -> CreatorContext
-    # Returns full structured profile for Agent 3
+def log_episode(kind: str, payload: dict, run_id: int) -> int:
+    """Embed, insert, return episode id. Called by Agents 2 and 3."""
 
-    def ingest_feedback(feedback: Feedback) -> None
-    # Ingests creator response to a recommendation
-    # This is where recursive learning happens
-
-    def ingest_content_result(item: ContentItem) -> None
-    # Ingests performance data from a published video
-
-    def extract_patterns() -> List[LearnedPattern]
-    # Derives conclusions from accumulated content items
-
-    def update_pattern(pattern_id: str, new_evidence: dict) -> None
-    # Updates confidence score and evidence count
-
-    def get_patterns(min_confidence: float = 0.5) -> List[LearnedPattern]
-    # Returns patterns above confidence threshold
+def get_context(task: str, token_budget: int = 4000) -> dict:
+    """Returns {creator_profile, core_insights, relevant_insights,
+    related_entities, last_run}, assembled in priority order until the
+    token budget is spent. Deprecated/expired-volatile insights are never
+    returned; every insight carries its status so Agent 3 can hedge."""
 ```
 
-### System Prompt Guidance
+Payload contracts for each `episodes.kind` value (including the
+onboarding-only `onboarding_finding` shape) are frozen in
+`agents/models.py` — build against those dataclasses, not raw dicts.
 
-Agent 1 should be prompted to:
-- Synthesize, not just store
-- Express learnings as generalized rules, not specific facts
-- Assign confidence scores (0.0 – 1.0) to every conclusion
-- Update existing patterns rather than creating duplicates
-- Flag contradictions in the knowledge base
+### Consolidation Engine (`consolidation.py`)
+
+Runs whenever unconsolidated episodes exist (NemoClaw heartbeat), plus once
+immediately after onboarding. One batch call to Nemotron (via vLLM)
+proposes `new_hypotheses` / `evidence_updates` / `contradictions`; a second
+Featherless call calibrates the same batch. All confidence math and
+lifecycle promotion after that is deterministic code — the LLM proposes,
+the code disposes:
+
+- New hypothesis → confidence `0.30`, status `hypothesis`
+- Support → `c = c + 0.15*(1-c)` (single model) or `+0.20*(1-c)` (both
+  models agree)
+- Contradict → `c = c * 0.60`
+- Promotion: 3+ support & `c > 0.60` → `validated`; 5+ & `c > 0.85` →
+  `core`; `c < 0.20` → `deprecated` (kept, never deleted)
+- Dedup: pgvector cosine similarity ≥ 0.90 merges as evidence instead of
+  inserting a duplicate
+
+### Onboarding Bootstrap (`onboarding.py`)
+
+One-time job at creator signup, distinct from Agent 2's ongoing trend
+monitoring. Logs every past-upload finding as an `onboarding_finding`
+episode, builds the initial entity graph (creator + video + topic nodes,
+`performed_well`/`underperformed` edges), and runs consolidation
+immediately rather than waiting for the next heartbeat. Promotion is
+capped at `validated` during this pass — nothing reaches `core` on run 1,
+so the run-1-vs-run-N improvement curve stays honest.
 
 ### Example Learning
 
-**Raw input:**
+**Raw input (onboarding catalog):**
 > Video A: 120k views, format=benchmark, length=14min
 > Video B: 38k views, format=opinion, length=18min
 > Video C: 145k views, format=benchmark, length=12min
 
 **Stored conclusion:**
-> Pattern: "Benchmark-format videos consistently outperform opinion-format videos"
-> Confidence: 0.82 | Evidence: 3 items
+> Insight: "Benchmark-format videos consistently outperform opinion-format videos"
+> Status: `hypothesis` (capped — onboarding pass) | Confidence: 0.30 → climbs with live evidence
 
 ---
 

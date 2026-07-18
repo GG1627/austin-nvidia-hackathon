@@ -19,20 +19,25 @@
 - [ ] Agree on inter-agent message format (structured JSON)
 - [ ] Create folder structure:
   ```
+  /db
+    schema.sql              # runs, episodes, insights, nodes, edges, insight_snapshots
   /agents
-    agent1_memory.py
+    models.py                # Agent 1: frozen payload contracts + table dataclasses
+    db.py                    # Agent 1: Supabase REST client
+    embeddings.py            # Agent 1: Featherless embeddings + cosine helpers
+    llm.py                   # Agent 1: Nemotron proposer + Featherless calibration
+    consolidation.py         # Agent 1: batch consolidation engine
+    memory.py                # Agent 1: log_episode() / get_context()
+    onboarding.py            # Agent 1: onboarding bootstrap
     agent2_research.py
     agent3_strategist.py
-  /memory
-    knowledge_graph.json   # persisted between runs
-    creator_profile.json
+  /scripts
+    seed_onboarding.py       # Agent 1: end-to-end onboarding proof
   /tools
     reddit_tool.py
     trends_tool.py
     youtube_tool.py
-    memory_tool.py
   /prompts
-    agent1_system.txt
     agent2_system.txt
     agent3_system.txt
   main.py
@@ -42,30 +47,30 @@
 
 ---
 
-### Phase 1 — Agent 1: Creator Memory Brain (Hours 2–8)
+### Phase 1 — Agent 1: Memory & Knowledge Layer (Hours 2–8)
 **Owner: Memory & Knowledge Engineer**
 
-#### Milestone 1.1 — Knowledge Graph Foundation
-- [ ] Design schema for persistent memory nodes:
-  - `CreatorProfile` (niche, audience, style, goals)
-  - `ContentItem` (title, views, retention, topics, outcome)
-  - `LearnedPattern` (observation → conclusion)
-  - `ContentIdea` (title, angle, research_status, priority)
-  - `FailedTopic` (topic, reason, date)
-- [ ] Implement `MemoryStore` class with JSON persistence
-- [ ] Implement `read_memory()`, `write_memory()`, `update_pattern()` methods
+#### Milestone 1.1 — Supabase Schema Foundation
+- [x] Design schema (`db/schema.sql`): `runs`, `episodes`, `insights`, `nodes`,
+  `edges`, `insight_snapshots` + pgvector HNSW indexes + `match_insights` RPC
+- [x] Implement `SupabaseClient` (`agents/db.py`) — thin REST wrapper, no SDK dependency
+- [x] Freeze payload contracts + table-mirroring dataclasses (`agents/models.py`)
 
-#### Milestone 1.2 — Learning Engine
-- [ ] Implement `extract_patterns()` — convert raw performance data into conclusions
-  - e.g., "Benchmark videos outperform opinion pieces" stored as a `LearnedPattern`
-- [ ] Implement `confidence_score()` — track how confident the system is in each pattern
-- [ ] Implement `decay_unused_patterns()` — de-prioritize stale learnings
-- [ ] Unit test: load memory, add 3 content items, assert patterns are extracted
+#### Milestone 1.2 — Consolidation Engine
+- [x] Implement `run_consolidation()` — one batch Nemotron call proposes
+  `new_hypotheses` / `evidence_updates` / `contradictions`; deterministic code
+  applies confidence math and lifecycle promotion (`agents/consolidation.py`)
+- [x] Implement pgvector dedup (merge as evidence above ~0.90 cosine similarity)
+- [x] Implement Featherless dual-model calibration for the faster support factor
+- [x] Implement volatility-based expiry for trend-derived insights
+- [x] Unit test: math + onboarding + dedup, offline (`tests/test_memory_layer.py`)
 
-#### Milestone 1.3 — Agent 1 Prompt & API
-- [ ] Write Agent 1 system prompt emphasizing memory synthesis over raw storage
-- [ ] Expose `get_creator_context()` — returns structured brief for Agent 3
-- [ ] Expose `ingest_feedback(result)` — ingests post-action results and updates patterns
+#### Milestone 1.3 — Public Interfaces & Onboarding
+- [x] Expose `log_episode(kind, payload, run_id)` and `get_context(task, token_budget)`
+  (`agents/memory.py`) — the only door into the memory layer
+- [x] Implement onboarding bootstrap (`agents/onboarding.py`): seeds the entity
+  graph and runs consolidation immediately at signup, capped at `validated`
+- [x] End-to-end proof script (`scripts/seed_onboarding.py`)
 
 ---
 

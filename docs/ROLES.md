@@ -8,41 +8,50 @@
 ## Position 1 — Memory & Knowledge Engineer
 
 ### Primary Owner
-Agent 1 — Creator Intelligence Agent (Persistent Memory Brain)
+Agent 1 — Memory & Knowledge Layer (persistent memory brain: episodic log,
+semantic insights, entity graph — Supabase/pgvector backed)
 
 ### Core Responsibilities
 
-- Design and implement the **persistent knowledge graph** schema
-- Build the **learning engine** that converts raw data into stored conclusions
-- Implement the `MemoryStore` class with full read/write/update capabilities
-- Develop **pattern extraction logic** (e.g., "benchmark videos outperform opinion pieces")
-- Implement **confidence scoring** for all stored learnings
-- Ensure memory **persists across process restarts** (file or DB-backed)
-- Expose clean APIs for Agent 2 and Agent 3 to read/write memory
-- Implement `ingest_feedback()` — the core of the recursive learning loop
-- Implement memory **decay logic** for stale or invalidated patterns
+- Design and implement the **Supabase schema** (`db/schema.sql`): `runs`,
+  `episodes`, `insights`, `nodes`, `edges`, `insight_snapshots`
+- Build the **consolidation engine** that turns raw episodes into
+  confidence-scored insights (Nemotron proposes, deterministic code
+  disposes — `agents/consolidation.py`)
+- Implement the two public interfaces — `log_episode()` and
+  `get_context()` (`agents/memory.py`) — the *only* door into this layer
+- Implement the **onboarding bootstrap** (`agents/onboarding.py`): one-time
+  pass that seeds the entity graph and runs consolidation immediately at
+  creator signup, so run 1 isn't a cold start
+- Ensure memory **persists in Postgres**, not in-process state
+- Implement pgvector **dedup** and volatility-based **expiry** for stale
+  or trend-derived insights
 
 ### Key Deliverables
 
 | Deliverable | Description |
 |-------------|-------------|
-| `agents/agent1_memory.py` | Core memory agent |
-| `memory/knowledge_graph.json` | Persisted knowledge store |
-| `tools/memory_tool.py` | Read/write/query API |
-| `prompts/agent1_system.txt` | Agent 1 system prompt |
-| Pattern extraction tests | Unit tests proving patterns are learned |
+| `db/schema.sql` | Supabase/pgvector schema + `match_insights` RPC |
+| `agents/models.py` | Frozen payload contracts + table-mirroring dataclasses |
+| `agents/consolidation.py` | Batch consolidation engine (confidence math, promotions, dedup) |
+| `agents/memory.py` | `log_episode()` / `get_context()` |
+| `agents/onboarding.py` | Onboarding bootstrap |
+| `tests/test_memory_layer.py` | Unit tests: math, onboarding, dedup, `get_context` — offline, no live creds needed |
+| `scripts/seed_onboarding.py` | End-to-end proof against a real Supabase project |
 
 ### Technical Skills Needed
-- Python (data classes, JSON serialization)
-- Basic knowledge graph / structured data design
-- LLM prompting for knowledge synthesis
-- Optional: ChromaDB or SQLite for advanced memory storage
+- Python (dataclasses, REST/HTTP clients)
+- Postgres + pgvector schema design
+- LLM prompting for structured JSON extraction (Nemotron via vLLM)
+- Deterministic state-machine thinking for confidence/lifecycle math
 
 ### What "Done" Looks Like
-- Run the system 3 times with different feedback
-- Knowledge graph grows each run
-- Learned patterns visibly influence Agent 3's recommendations
-- Memory survives a process kill + restart
+- `python scripts/seed_onboarding.py` seeds a fake catalog and prints a
+  populated `get_context()` — not an empty shell
+- Insights visibly promote across a few consolidation passes, capped at
+  `validated` on the onboarding run and reaching `core` only afterward
+- Memory persists in Supabase across process restarts by construction
+- `tests/test_memory_layer.py` passes without any live API keys
 
 ---
 
