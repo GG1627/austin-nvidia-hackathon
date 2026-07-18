@@ -1,0 +1,18 @@
+{
+  "niche": "AI tools for developers",
+  "audience_description": "software engineers and ML practitioners aged 25-40",
+  "preferred_format": "benchmark",
+  "preferred_length_min": 12,
+  "posting_frequency": "weekly",
+  "platform": "YouTube",
+  "avoid_topics": [
+    "crypto",
+    "politics",
+    "celebrity"
+  ],
+  "goals": [
+    "grow to 100k subscribers",
+    "establish authority in AI tooling space"
+  ],
+  "notes": "Audience responds well to practical demos with real benchmarks. Hype-free tone preferred."
+}
