@@ -71,6 +71,8 @@ class ResearchAgent:
         ollama_url: Optional[str] = None,
         ollama_model: Optional[str] = None,
         tavily_api_key: Optional[str] = None,
+        youtube_api_key: Optional[str] = None,
+        x_bearer_token: Optional[str] = None,
         http_client: Optional[httpx.Client] = None,
         memory_store: Any = None,
         max_per_source: int = 12,
@@ -78,6 +80,8 @@ class ResearchAgent:
         self.ollama_url = (ollama_url or os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
         self.ollama_model = ollama_model or os.getenv("OLLAMA_MODEL", "nemoclaw")
         self.tavily_api_key = tavily_api_key if tavily_api_key is not None else os.getenv("TAVILY_API_KEY", "")
+        self.youtube_api_key = youtube_api_key if youtube_api_key is not None else os.getenv("YOUTUBE_API_KEY", "")
+        self.x_bearer_token = x_bearer_token if x_bearer_token is not None else os.getenv("X_BEARER_TOKEN", "")
         self.max_per_source = max_per_source
         self._owns_client = http_client is None
         self._client = http_client or httpx.Client(timeout=12, follow_redirects=True)
@@ -100,7 +104,10 @@ class ResearchAgent:
             ("github", self.fetch_github_trending),
             ("nvidia_rss", self.fetch_nvidia_news),
             ("tavily", self.fetch_tavily_signals),
+            ("youtube", self.fetch_youtube_signals),
         ]
+        if os.getenv("ENABLE_X", "false").lower() in {"1", "true", "yes"}:
+            fetchers.append(("x", self.fetch_x_signals))
         for name, fetch in fetchers:
             try:
                 signals.extend(fetch())
@@ -142,6 +149,14 @@ class ResearchAgent:
     def fetch_tavily_signals(self) -> list[RawSignal]:
         from tools.world_sources import fetch_tavily_signals
         return fetch_tavily_signals(self._client, self.max_per_source, self.tavily_api_key)
+
+    def fetch_youtube_signals(self) -> list[RawSignal]:
+        from tools.social_sources import fetch_youtube_signals
+        return fetch_youtube_signals(self._client, self.max_per_source, self.youtube_api_key)
+
+    def fetch_x_signals(self) -> list[RawSignal]:
+        from tools.social_sources import fetch_x_signals
+        return fetch_x_signals(self._client, self.max_per_source, self.x_bearer_token)
 
     # ---- Analysis, ranking, and integration ------------------------
 
