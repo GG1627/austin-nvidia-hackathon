@@ -100,3 +100,32 @@ def test_x_is_disabled_by_default(monkeypatch):
         monkeypatch.setattr(agent, name, lambda: [])
     assert agent.get_opportunities(context())
     assert "x" not in agent.last_result.source_errors
+
+
+def test_default_model_is_nemotron_not_nemoclaw(monkeypatch):
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
+    assert ResearchAgent().ollama_model == "nemotron-3-nano:4b"
+
+
+def test_nemoclaw_openai_compatible_inference_route():
+    import httpx
+
+    def handler(request):
+        assert str(request.url) == "https://inference.local/v1/chat/completions"
+        assert request.json()["model"] == "nemotron-3-nano:30b"
+        content = '{"topic":"AI agents","suggested_angle":"Benchmark agents","reasoning":"Live evidence","niche_alignment":90,"competition_gap":60}'
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        agent = ResearchAgent(http_client=client, inference_base_url="https://inference.local/v1", ollama_model="nemotron-3-nano:30b")
+        analysis = agent._analyse_group([signal("hn", "AI agents", "https://hn/a")], context())
+    assert analysis["topic"] == "AI agents"
+
+
+def test_malformed_llm_json_uses_grounded_fallback(monkeypatch):
+    agent = ResearchAgent()
+    response = type("Response", (), {"raise_for_status": lambda self: None, "json": lambda self: {"response": "{}"}})()
+    monkeypatch.setattr(agent._client, "post", lambda *args, **kwargs: response)
+    analysis = agent._analyse_group([signal("hacker_news", "Local LLM tools", "https://hn/a")], context())
+    assert analysis["topic"] == "Local LLM tools"
+    assert "Grounded" in analysis["reasoning"]

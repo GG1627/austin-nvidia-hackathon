@@ -70,6 +70,7 @@ class ResearchAgent:
         *,
         ollama_url: Optional[str] = None,
         ollama_model: Optional[str] = None,
+        inference_base_url: Optional[str] = None,
         tavily_api_key: Optional[str] = None,
         youtube_api_key: Optional[str] = None,
         x_bearer_token: Optional[str] = None,
@@ -78,7 +79,10 @@ class ResearchAgent:
         max_per_source: int = 12,
     ) -> None:
         self.ollama_url = (ollama_url or os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
-        self.ollama_model = ollama_model or os.getenv("OLLAMA_MODEL", "nemoclaw")
+        # NemoClaw is the secure runtime, not an Ollama model. This 4B
+        # Nemotron model is a practical local default for an 8 GB RTX laptop.
+        self.ollama_model = ollama_model or os.getenv("OLLAMA_MODEL", "nemotron-3-nano:4b")
+        self.inference_base_url = (inference_base_url or os.getenv("INFERENCE_BASE_URL", "")).rstrip("/")
         self.tavily_api_key = tavily_api_key if tavily_api_key is not None else os.getenv("TAVILY_API_KEY", "")
         self.youtube_api_key = youtube_api_key if youtube_api_key is not None else os.getenv("YOUTUBE_API_KEY", "")
         self.x_bearer_token = x_bearer_token if x_bearer_token is not None else os.getenv("X_BEARER_TOKEN", "")
@@ -185,16 +189,28 @@ class ResearchAgent:
         payload = {"creator_profile": profile, "signals": [asdict(s) for s in group]}
         prompt = self.system_prompt + "\n" + json.dumps(payload)
         try:
-            response = self._client.post(f"{self.ollama_url}/api/generate", json={"model": self.ollama_model, "prompt": prompt, "stream": False, "format": "json"}, timeout=45)
-            response.raise_for_status()
-            data = json.loads(response.json()["response"])
+            if self.inference_base_url:
+                response = self._client.post(f"{self.inference_base_url}/chat/completions", json={"model": self.ollama_model, "messages": [{"role": "system", "content": self.system_prompt}, {"role": "user", "content": json.dumps(payload)}], "response_format": {"type": "json_object"}}, timeout=45)
+                response.raise_for_status()
+                data = json.loads(response.json()["choices"][0]["message"]["content"])
+            else:
+                response = self._client.post(f"{self.ollama_url}/api/generate", json={"model": self.ollama_model, "prompt": prompt, "stream": False, "format": "json"}, timeout=45)
+                response.raise_for_status()
+                data = json.loads(response.json()["response"])
             if not all(isinstance(data.get(k), str) and data[k].strip() for k in ("topic", "suggested_angle", "reasoning")):
-                return None
+                return self._fallback_analysis(group, profile)
             return data
         except Exception:
             # A usable deterministic fallback keeps the live-monitor promise when Ollama is offline.
             first = group[0]
             return {"topic": first.topic or first.title, "suggested_angle": f"Practical developer guide to {first.topic or first.title}", "reasoning": f"Grounded in {len(group)} live signal(s), led by {first.source}.", "niche_alignment": _keyword_alignment(first.title, profile), "competition_gap": 50}
+
+    @staticmethod
+    def _fallback_analysis(group: list[RawSignal], profile: dict[str, Any]) -> dict[str, Any]:
+        """Keep live opportunities usable when a local model is unavailable or malformed."""
+        first = group[0]
+        topic = first.topic or first.title
+        return {"topic": topic, "suggested_angle": f"Practical developer guide to {topic}", "reasoning": f"Grounded in {len(group)} live signal(s), led by {first.source}.", "niche_alignment": _keyword_alignment(first.title, profile), "competition_gap": 50}
 
     def _scores(self, group: list[RawSignal], analysis: dict[str, Any], creator_context: Any) -> tuple[float, float, float, float]:
         max_engagement = max((s.engagement for s in group), default=0)
