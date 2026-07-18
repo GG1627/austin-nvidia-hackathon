@@ -256,14 +256,35 @@ def _topic_key(value: str) -> str:
 
 
 def _profile_dict(context: Any) -> dict[str, Any]:
+    """Build Agent 2's compact view of Agent 1 context.
+
+    Agent 1 remains the authority for feedback and learning.  Agent 2 consumes
+    its core/relevant insight statements on later heartbeats, letting outcomes
+    influence opportunity analysis without creating a second feedback store.
+    """
     profile = getattr(context, "creator_profile", None) or getattr(context, "profile", None) or (context.get("creator_profile") if isinstance(context, dict) else None) or {}
-    return asdict(profile) if hasattr(profile, "__dataclass_fields__") else dict(profile)
+    result = asdict(profile) if hasattr(profile, "__dataclass_fields__") else dict(profile)
+    if isinstance(context, dict):
+        insights = list(context.get("core_insights") or []) + list(context.get("relevant_insights") or [])
+    else:
+        insights = list(getattr(context, "core_insights", []) or []) + list(getattr(context, "relevant_insights", []) or [])
+    statements = []
+    for insight in insights:
+        if isinstance(insight, dict):
+            statement = insight.get("statement") or insight.get("text")
+        else:
+            statement = getattr(insight, "statement", None) or getattr(insight, "text", None)
+        if isinstance(statement, str) and statement.strip():
+            statements.append(statement.strip())
+    result["learned_insights"] = statements[:12]
+    return result
 
 
 def _keyword_alignment(text: str, profile: dict[str, Any]) -> float:
     words = set(_topic_key(text).split())
     niche_words = set(_topic_key(str(profile.get("niche", ""))).split())
-    return min(100.0, 35.0 + 20.0 * len(words & niche_words))
+    insight_words = set(_topic_key(" ".join(profile.get("learned_insights", []))).split())
+    return min(100.0, 35.0 + 20.0 * len(words & niche_words) + 5.0 * len(words & insight_words))
 
 
 def _recency_score(value: Optional[str]) -> float:
