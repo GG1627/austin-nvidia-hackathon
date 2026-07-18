@@ -131,3 +131,82 @@ class GetContextResult:
     relevant_insights: List[dict]
     related_entities: List[dict]
     last_run: Optional[str]
+
+
+# Compatibility domain models used by the JSON memory store and Agent 2.
+def _uid() -> str:
+    return str(uuid.uuid4())
+
+
+def _now() -> str:
+    return datetime.now().isoformat()
+
+
+@dataclass
+class CreatorProfile:
+    niche: str = ""
+    audience_description: str = ""
+    preferred_format: str = ""
+    preferred_length_min: float = 0.0
+    posting_frequency: str = ""
+    platform: str = ""
+    avoid_topics: List[str] = field(default_factory=list)
+    goals: List[str] = field(default_factory=list)
+    notes: str = ""
+
+
+@dataclass
+class ContentItem:
+    id: str = field(default_factory=_uid)
+    title: str = ""
+    format: str = ""
+    length_min: float = 0.0
+    views: int = 0
+    retention_pct: float = 0.0
+    topics: List[str] = field(default_factory=list)
+    outcome: str = ""
+    published_date: str = field(default_factory=_now)
+
+
+@dataclass
+class LearnedPattern:
+    id: str = field(default_factory=_uid)
+    pattern: str = ""
+    category: str = ""
+    confidence: float = 0.0
+    evidence_count: int = 0
+    active: bool = True
+    times_cited: int = 0
+    last_updated: str = field(default_factory=_now)
+
+
+@dataclass
+class ContentIdea:
+    id: str = field(default_factory=_uid)
+    title: str = ""
+    status: str = "pending"
+    research_complete: float = 0.0
+
+
+@dataclass
+class Feedback:
+    recommendation_id: str = ""
+    recommendation_title: str = ""
+    action: str = ""
+    notes: str = ""
+    outcome_views: Optional[int] = None
+    outcome_retention: Optional[float] = None
+    outcome_notes: str = ""
+    outcome_date: Optional[str] = None
+
+
+@dataclass
+class CreatorContext:
+    profile: CreatorProfile = field(default_factory=CreatorProfile)
+    learned_patterns: List[LearnedPattern] = field(default_factory=list)
+    top_performing_topics: List[str] = field(default_factory=list)
+    avoid_topics: List[str] = field(default_factory=list)
+    pending_ideas: List[ContentIdea] = field(default_factory=list)
+    total_content_items: int = 0
+    run_count: int = 0
+    last_updated: str = field(default_factory=_now)
