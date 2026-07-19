@@ -10,14 +10,14 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 import time
 
 from agents.agent2_handoff import build_handoff, write_latest_handoff
 from agents.agent2_research import ResearchAgent
 
 ContextProvider = Callable[[], Any]
-EpisodeLogger = Callable[[str, dict[str, Any], int | str], int]
+EpisodeLogger = Callable[[str, dict[str, Any], Union[int, str]], int]
 
 
 class Agent2Heartbeat:
