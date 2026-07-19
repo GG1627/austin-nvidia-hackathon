@@ -34,3 +34,4 @@ everything fully functional.
 - [docs/RECURSIVE_LOOP.md](docs/RECURSIVE_LOOP.md) — the learning loop & demo script
 - [docs/ROLES.md](docs/ROLES.md) — team responsibilities
 - [docs/AGENT3_INTEGRATION.md](docs/AGENT3_INTEGRATION.md) — Agent 3 status, testing & integration
+- [docs/VLLM_NEMOCLAW_DEMO.md](docs/VLLM_NEMOCLAW_DEMO.md) — vLLM + NemoClaw hackathon deployment validation

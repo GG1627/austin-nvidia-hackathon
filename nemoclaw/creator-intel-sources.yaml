@@ -1,0 +1,52 @@
+﻿preset:
+  name: creator-intel-sources
+  description: "Read-only live-source allowlist for the Creator Intelligence Agent"
+network_policies:
+  creator_intel_sources:
+    name: creator-intel-sources
+    endpoints:
+      - host: www.reddit.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/r/**" }
+      - host: hacker-news.firebaseio.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/v0/**" }
+      - host: trends.google.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/trends/**" }
+      - host: github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/trending/**" }
+      - host: nvidianews.nvidia.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/releases.xml" }
+      - host: www.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/youtube/v3/**" }
+      - host: api.tavily.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/search" }
+    binaries:
+      - { path: /usr/bin/python3 }
+      - { path: /sandbox/.venv/bin/python3 }

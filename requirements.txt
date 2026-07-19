@@ -1,9 +1,11 @@
-# Agent 3 (strategist, orchestration, CLI) runs on the Python 3.11+ standard
-# library only — `python3 main.py` and `python3 -m unittest` need NO installs.
-# NVIDIA NIM is called via urllib; .env is parsed by tools/nim_client.load_env.
+httpx>=0.27
+python-dotenv>=1.0
+pytest>=8.0
 
-# Optional quality-of-life (used automatically if present, never required):
-# python-dotenv>=1.0
+# Agent 3 (strategist, orchestration, CLI) runs on the Python 3.11+ standard
+# library only — `python3 main.py` and `python3 -m unittest` need NO extra
+# installs beyond the above. NVIDIA NIM is called via urllib; .env is parsed
+# by tools/nim_client.load_env.
 
 # --- Agent 2 (research connectors) — uncomment as those land ---
 # praw>=7.7            # Reddit
