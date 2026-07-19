@@ -48,35 +48,29 @@ The system is composed of three specialized AI agents that communicate through s
 
 ## Data Contracts
 
-### Creator Context (Agent 1 → Agent 3)
+### get_context() (Agent 1 → Agent 3)
+
+The only read interface into the memory layer. See `agents/memory.py` and
+Agent 1's spec section 7 for the authoritative contract.
 
 ```json
 {
-  "creator_profile": {
-    "niche": "AI tools for developers",
-    "audience": "engineers, 25-40",
-    "preferred_length": "10-15 minutes",
-    "posting_frequency": "weekly"
-  },
-  "learned_patterns": [
-    {
-      "id": "p_001",
-      "pattern": "Benchmark videos outperform opinion pieces",
-      "confidence": 0.87,
-      "evidence_count": 6,
-      "last_updated": "2026-07-18"
-    }
+  "creator_profile": {"niche": "AI tools for developers", "audience_description": "engineers, 25-40"},
+  "core_insights": [
+    {"id": 3, "statement": "Benchmark-format videos outperform opinion pieces", "status": "core", "confidence": 0.91}
   ],
-  "top_performing_topics": ["LLM benchmarks", "local AI", "NVIDIA tools"],
-  "avoid_topics": ["crypto", "politics"],
-  "pending_ideas": [
-    {
-      "title": "NVIDIA Claw Deep Dive",
-      "research_complete": 0.8
-    }
-  ]
+  "relevant_insights": [
+    {"id": 12, "statement": "Videos over 20 minutes underperform in this creator's catalog", "status": "hypothesis", "confidence": 0.30}
+  ],
+  "related_entities": [
+    {"type": "video", "name": "LLM Benchmark Showdown", "edges": [{"relation": "performed_well", "weight": 1.4}]}
+  ],
+  "last_run": {"run_id": 4, "recommendations": [], "outcomes": []}
 }
 ```
+
+Deprecated insights and expired volatile insights are never returned;
+every insight carries its `status` so Agent 3 can hedge on hypotheses.
 
 ### Opportunity Object (Agent 2 → Agent 3)
 
@@ -131,46 +125,14 @@ The system is composed of three specialized AI agents that communicate through s
 
 ---
 
-## Knowledge Graph Schema
+## Memory Layer Schema
 
-```json
-{
-  "version": 1,
-  "last_updated": "2026-07-18T04:00:00Z",
-  "run_count": 4,
-  "creator_profile": { },
-  "content_items": [
-    {
-      "id": "ci_001",
-      "title": "...",
-      "views": 120000,
-      "retention_pct": 62,
-      "topics": ["LLM", "benchmark"],
-      "format": "tutorial",
-      "length_min": 14
-    }
-  ],
-  "learned_patterns": [
-    {
-      "id": "p_001",
-      "pattern": "Benchmark videos outperform opinion pieces",
-      "confidence": 0.87,
-      "evidence_count": 6,
-      "supporting_items": ["ci_001", "ci_004"],
-      "created": "2026-07-15",
-      "last_updated": "2026-07-18"
-    }
-  ],
-  "surfaced_opportunities": ["opp_20260718_001"],
-  "acceptance_history": [],
-  "metrics": {
-    "total_patterns": 7,
-    "acceptance_rate": 0.75,
-    "avg_confidence_run1": 0.42,
-    "avg_confidence_current": 0.81
-  }
-}
-```
+Persisted in Supabase/Postgres + pgvector, not JSON files. Full DDL lives
+in `db/schema.sql`: `runs`, `episodes` (append-only, embedded), `insights`
+(lifecycle-tracked conclusions), `nodes`/`edges` (entity graph),
+`insight_snapshots` (per-run diffing for the run-1-vs-run-N demo). Agent 1
+is the only code that touches these tables directly — everything else
+goes through `log_episode()` / `get_context()`.
 
 ---
 
@@ -178,9 +140,9 @@ The system is composed of three specialized AI agents that communicate through s
 
 | Layer | Technology | Rationale |
 |-------|-----------|----------|
-| LLM Inference | NVIDIA NIM | Hackathon requirement, fast inference |
+| LLM Inference | NVIDIA NIM (Nemotron) | Hackathon requirement, fast inference |
 | Orchestration | Python 3.11 | Simple, fast to build |
-| Memory Store | JSON → ChromaDB | Start simple, upgrade if time allows |
+| Memory Store | Supabase (Postgres + pgvector) | Durable, Realtime dashboard, native vector search |
 | Reddit | PRAW | Official Python Reddit API wrapper |
 | Trends | pytrends | Google Trends Python client |
 | Web Search | Tavily API | Fast structured search results |
@@ -192,26 +154,34 @@ The system is composed of three specialized AI agents that communicate through s
 ## Folder Structure
 
 ```
-auston-nvidia-hackathon/
+austin-nvidia-hackathon/
 ├── main.py                    # Entry point
 ├── requirements.txt
 ├── .env.example
+├── db/
+│   └── schema.sql             # Supabase/pgvector schema + match_insights RPC
 ├── agents/
-│   ├── agent1_memory.py       # Creator Intelligence Agent
-│   ├── agent2_research.py     # Research & Opportunity Agent
-│   └── agent3_strategist.py   # Strategist / Execution Agent
-├── memory/
-│   ├── knowledge_graph.json   # Persistent store (grows each run)
-│   └── creator_profile.json   # Creator onboarding data
+│   ├── models.py               # Agent 1: frozen payload contracts + table dataclasses
+│   ├── db.py                   # Agent 1: Supabase REST client
+│   ├── embeddings.py           # Agent 1: vLLM embeddings + cosine helpers
+│   ├── llm.py                  # Agent 1: Nemotron proposer + vLLM calibration
+│   ├── consolidation.py        # Agent 1: batch consolidation engine
+│   ├── memory.py               # Agent 1: log_episode() / get_context()
+│   ├── onboarding.py           # Agent 1: onboarding bootstrap
+│   ├── agent2_research.py      # Research & Opportunity Agent
+│   └── agent3_strategist.py    # Strategist / Execution Agent
+├── scripts/
+│   └── seed_onboarding.py     # Agent 1: end-to-end onboarding proof
 ├── tools/
-│   ├── memory_tool.py         # Read/write knowledge graph
-│   ├── reddit_tool.py         # Reddit connector
-│   ├── trends_tool.py         # Google Trends + HN
-│   └── youtube_tool.py        # YouTube trending
+│   ├── reddit_tool.py          # Reddit connector
+│   ├── trends_tool.py          # Google Trends + HN
+│   └── youtube_tool.py         # YouTube trending
 ├── prompts/
-│   ├── agent1_system.txt
 │   ├── agent2_system.txt
 │   └── agent3_system.txt
+├── tests/
+│   ├── fakes.py                # In-memory Supabase fake for offline tests
+│   └── test_memory_layer.py    # Agent 1 unit tests
 └── docs/
     ├── IMPLEMENTATION_PLAN.md
     ├── ROLES.md

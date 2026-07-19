@@ -1,13 +1,15 @@
 """
 Agent 1 - Memory & Knowledge Engineer
 Data models for the Recursive Creator Intelligence System.
-Spec-compliant: Supabase + pgvector backend.
+
+These mirror db/schema.sql exactly. Field names here ARE the frozen
+contract Agent 2 and Agent 3 build against — do not rename without
+updating the schema and every consumer.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, List, Literal
 from datetime import datetime
-import uuid
 
 # ---------------------------------------------------------------------------
 # Lifecycle & classification types
@@ -16,197 +18,132 @@ import uuid
 InsightStatus = Literal["hypothesis", "validated", "core", "deprecated"]
 VolatilityClass = Literal["stable", "semi_stable", "volatile"]
 EpisodeKind = Literal[
-    "onboarding_finding",
-    "research_finding",
+    "observation",
     "recommendation",
     "outcome",
     "feedback",
-    "observation",
+    "research_finding",
+    "onboarding_finding",
 ]
+NodeType = Literal["creator", "topic", "video", "audience_segment", "opportunity"]
 
 # ---------------------------------------------------------------------------
-# Frozen payload contracts (shared with Agent 2 & Agent 3)
+# Frozen payload contracts (spec section 6) — shared with Agent 2 & Agent 3
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class OnboardingFindingPayload:
     video_title: str
-    published_at: str           # ISO-8601
+    published_at: str  # ISO-8601
     duration_minutes: float
     views: int
-    retention_pct: float        # 0-100
-    topic_tags: List[str]
+    retention_pct: float  # 0-100
+    topic_tags: List[str] = field(default_factory=list)
     raw_ref: Optional[str] = None
+
 
 @dataclass
 class ResearchFindingPayload:
     source: str
     topic: str
-    trend_score: float          # 0-1
+    trend_score: float
     reason: str
     suggested_angle: str
     raw_ref: Optional[str] = None
+
 
 @dataclass
 class RecommendationPayload:
     statement: str
     reasoning: str
-    cited_insight_ids: List[str]
-    predicted_outcome: str
+    cited_insight_ids: List[int] = field(default_factory=list)
+    predicted_outcome: dict = field(default_factory=dict)
+
 
 @dataclass
 class OutcomePayload:
-    recommendation_episode_id: str
-    actual: str
+    recommendation_episode_id: int
+    actual: dict
     prediction_correct: bool
+
 
 @dataclass
 class FeedbackPayload:
-    recommendation_episode_id: str
-    action: str
-    creator_note: str
+    recommendation_episode_id: int
+    action: str  # accepted | rejected | ignored | modified
+    creator_note: str = ""
+
 
 @dataclass
 class ObservationPayload:
     note: str
 
+
 # ---------------------------------------------------------------------------
-# Core domain objects
+# Table-mirroring domain objects (spec section 5) — field names match
+# db/schema.sql column names 1:1.
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class Run:
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    id: Optional[int] = None
     started_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    status: str = "active"      # active | complete | failed
-    creator_id: Optional[str] = None
+    metrics: dict = field(default_factory=dict)
+
 
 @dataclass
 class Episode:
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    run_id: str = ""
+    id: Optional[int] = None
+    run_id: Optional[int] = None
+    ts: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     kind: EpisodeKind = "observation"
     payload: dict = field(default_factory=dict)
-    embedding: Optional[List[float]] = None
     consolidated: bool = False
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    embedding: Optional[List[float]] = None
+
 
 @dataclass
 class Insight:
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    text: str = ""
-    confidence: float = 0.3     # new hypotheses start at 0.3
+    id: Optional[int] = None
+    statement: str = ""
+    category: Optional[str] = None  # format | topic | timing | audience | style
+    confidence: float = 0.3
     status: InsightStatus = "hypothesis"
+    evidence_for: int = 0
+    evidence_against: int = 0
+    supporting_episode_ids: List[int] = field(default_factory=list)
     volatility: VolatilityClass = "semi_stable"
-    support_count: int = 0
-    contradict_count: int = 0
-    embedding: Optional[List[float]] = None
     expires_at: Optional[str] = None
-    source_episode_ids: List[str] = field(default_factory=list)
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_run: Optional[int] = None
+    last_updated_run: Optional[int] = None
+    embedding: Optional[List[float]] = None
+
 
 @dataclass
 class Node:
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    kind: str = "entity"        # entity | concept | topic
-    label: str = ""
-    attributes: dict = field(default_factory=dict)
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    id: Optional[int] = None
+    type: NodeType = "topic"
+    name: str = ""
+    attrs: dict = field(default_factory=dict)
+
 
 @dataclass
 class Edge:
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    from_node_id: str = ""
-    to_node_id: str = ""
+    src: int = 0
+    dst: int = 0
     relation: str = ""
     weight: float = 1.0
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    attrs: dict = field(default_factory=dict)
+
 
 @dataclass
 class GetContextResult:
-    """Return shape consumed by Agent 3."""
+    """Return shape consumed by Agent 3 (spec section 7)."""
+
     creator_profile: dict
     core_insights: List[dict]
     relevant_insights: List[dict]
     related_entities: List[dict]
-    last_run: Optional[str]
-
-
-# Compatibility domain models used by the JSON memory store and Agent 2.
-def _uid() -> str:
-    return str(uuid.uuid4())
-
-
-def _now() -> str:
-    return datetime.now().isoformat()
-
-
-@dataclass
-class CreatorProfile:
-    niche: str = ""
-    audience_description: str = ""
-    preferred_format: str = ""
-    preferred_length_min: float = 0.0
-    posting_frequency: str = ""
-    platform: str = ""
-    avoid_topics: List[str] = field(default_factory=list)
-    goals: List[str] = field(default_factory=list)
-    notes: str = ""
-
-
-@dataclass
-class ContentItem:
-    id: str = field(default_factory=_uid)
-    title: str = ""
-    format: str = ""
-    length_min: float = 0.0
-    views: int = 0
-    retention_pct: float = 0.0
-    topics: List[str] = field(default_factory=list)
-    outcome: str = ""
-    published_date: str = field(default_factory=_now)
-
-
-@dataclass
-class LearnedPattern:
-    id: str = field(default_factory=_uid)
-    pattern: str = ""
-    category: str = ""
-    confidence: float = 0.0
-    evidence_count: int = 0
-    active: bool = True
-    times_cited: int = 0
-    last_updated: str = field(default_factory=_now)
-
-
-@dataclass
-class ContentIdea:
-    id: str = field(default_factory=_uid)
-    title: str = ""
-    status: str = "pending"
-    research_complete: float = 0.0
-
-
-@dataclass
-class Feedback:
-    recommendation_id: str = ""
-    recommendation_title: str = ""
-    action: str = ""
-    notes: str = ""
-    outcome_views: Optional[int] = None
-    outcome_retention: Optional[float] = None
-    outcome_notes: str = ""
-    outcome_date: Optional[str] = None
-
-
-@dataclass
-class CreatorContext:
-    profile: CreatorProfile = field(default_factory=CreatorProfile)
-    learned_patterns: List[LearnedPattern] = field(default_factory=list)
-    top_performing_topics: List[str] = field(default_factory=list)
-    avoid_topics: List[str] = field(default_factory=list)
-    pending_ideas: List[ContentIdea] = field(default_factory=list)
-    total_content_items: int = 0
-    run_count: int = 0
-    last_updated: str = field(default_factory=_now)
+    last_run: Optional[dict]
