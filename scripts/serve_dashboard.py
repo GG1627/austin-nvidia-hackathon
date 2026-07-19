@@ -4,7 +4,7 @@ Standard library only (no new installs). Serves the same wiring as main.py
 (auto-detected real agents, stub fallback) over three endpoints:
 
     GET  /api/dashboard   aggregated live state for the React dashboard
-    POST /api/cycle       run one Agent 3 cycle (feedback deferred; the UI
+    POST /api/cycle       run one Agent 3 cycle (no feedback collected; the UI
                           submits real feedback afterwards via /api/feedback)
     POST /api/feedback    {"recommendation_id", "action", "notes"} -> Agent 1
 
@@ -22,22 +22,27 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agents.contracts import Feedback
+from agents.contracts import Feedback, Recommendation
 from main import build_strategist
 from tools.nim_client import load_env
 
 HANDOFF_PATH = os.path.join("memory", "agent2", "latest.json")
 PORT = int(os.environ.get("DASHBOARD_PORT", "8787"))
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 _strategist = None
+
+
+class FeedbackConflict(Exception):
+    """Raised when a recommendation already has decided feedback."""
 
 
 def strategist():
     global _strategist
-    if _strategist is None:
-        _strategist = build_strategist()
-    return _strategist
+    with _lock:
+        if _strategist is None:
+            _strategist = build_strategist()
+        return _strategist
 
 
 def _read_json(path: str) -> dict:
@@ -48,11 +53,24 @@ def _read_json(path: str) -> dict:
         return {}
 
 
-def _ago(iso: str) -> str:
+def _write_json(path: str, data: dict) -> None:
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2)
+    os.replace(tmp_path, path)
+
+
+def _age_seconds(iso: str):
     try:
         then = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        seconds = max(0, int((datetime.now(timezone.utc) - then).total_seconds()))
+        return max(0, int((datetime.now(timezone.utc) - then).total_seconds()))
     except ValueError:
+        return None
+
+
+def _ago(iso: str) -> str:
+    seconds = _age_seconds(iso)
+    if seconds is None:
         return "unknown"
     if seconds < 90:
         return f"{seconds} sec ago"
@@ -71,8 +89,13 @@ def dashboard_payload() -> dict:
     opportunities = handoff.get("opportunities", [])
     top = opportunities[0] if opportunities else {}
     errors = handoff.get("source_errors", {})
-    healthy = len({src.get("name", "") for o in opportunities for src in o.get("sources", [])})
-    total_sources = healthy + len(errors)
+    sources_line = ("all sources healthy" if not errors
+                    else f"{len(errors)} source error(s): " + ", ".join(sorted(errors)))
+    # A snapshot is stale when the failure path flagged it, or when it is
+    # simply old (heartbeat not running) — 3 missed intervals, min 15 min.
+    interval = float((handoff.get("heartbeat") or {}).get("interval_seconds") or 300)
+    age = _age_seconds(handoff.get("generated_at", "")) if handoff else None
+    stale = bool(handoff.get("stale")) or (age is not None and age > max(3 * interval, 900))
 
     recommendations = last_run.get("recommendations", [])
     move = recommendations[0] if recommendations else {}
@@ -100,9 +123,9 @@ def dashboard_payload() -> dict:
         "heartbeat": {
             "status": "Live" if handoff else "No heartbeat yet",
             "lastRun": _ago(handoff.get("generated_at", "")) if handoff else "never",
-            "sources": (f"{healthy} / {total_sources} healthy"
+            "sources": (sources_line
                         if handoff else "run scripts/run_agent2_heartbeat.py"),
-            "stale": bool(handoff.get("stale")),
+            "stale": stale,
         },
         "opportunity": {
             "id": top.get("id", ""),
@@ -133,10 +156,10 @@ def dashboard_payload() -> dict:
 
 
 def run_cycle() -> dict:
+    """Run one cycle without fabricating feedback — the creator's real
+    votes arrive later via /api/feedback."""
     with _lock:
-        result = strategist().run_cycle(
-            feedback_provider=lambda rec: Feedback(rec.id, "deferred", "awaiting dashboard feedback")
-        )
+        result = strategist().run_cycle(collect_feedback=False)
     return {"run_number": result.run_number,
             "recommendations": [r.to_dict() for r in result.recommendations]}
 
@@ -146,22 +169,48 @@ def submit_feedback(body: dict) -> dict:
     if action not in ("accepted", "rejected", "deferred"):
         raise ValueError(f"invalid action {action!r}")
     rec_id = body.get("recommendation_id", "")
+    if not rec_id:
+        raise ValueError("recommendation_id is required")
     s = strategist()
-    recommendation = None
-    for run in reversed(_read_json(s.history_path).get("runs", [])):
-        for rec in run.get("recommendations", []):
-            if rec.get("id") == rec_id:
-                from agents.contracts import Recommendation
-                recommendation = Recommendation.from_dict(rec)
-                break
-        if recommendation:
-            break
+
     with _lock:
-        s.memory.ingest_feedback(
-            Feedback(rec_id, action, body.get("notes", "")), recommendation=recommendation
-        )
+        history = _read_json(s.history_path)
+        run, recommendation = None, None
+        for candidate in reversed(history.get("runs", [])):
+            for rec in candidate.get("recommendations", []):
+                if rec.get("id") == rec_id:
+                    run, recommendation = candidate, Recommendation.from_dict(rec)
+                    break
+            if run:
+                break
+        if run is None:
+            raise ValueError(f"unknown recommendation_id {rec_id!r}")
+
+        feedback_list = run.setdefault("feedback", [])
+        existing = next((f for f in feedback_list
+                         if f.get("recommendation_id") == rec_id), None)
+        if existing and existing.get("action") in ("accepted", "rejected"):
+            raise FeedbackConflict(f"feedback for {rec_id} already recorded")
+
+        feedback = Feedback(rec_id, action, body.get("notes", ""))
+        s.memory.ingest_feedback(feedback, recommendation=recommendation)
+        if recommendation.opportunity_id and hasattr(s.memory, "mark_surfaced"):
+            s.memory.mark_surfaced(recommendation.opportunity_id)
         if hasattr(s.memory, "consolidate"):
             s.memory.consolidate()
+
+        # Fold the vote back into cycle history so feedbackGiven and
+        # acceptance_rate survive reloads instead of living only in React state.
+        if existing:
+            existing.update(feedback.to_dict())
+        else:
+            feedback_list.append(feedback.to_dict())
+        decided = [f for f in feedback_list if f.get("action") in ("accepted", "rejected")]
+        accepted = [f for f in decided if f.get("action") == "accepted"]
+        run.setdefault("metrics", {})["acceptance_rate"] = (
+            round(len(accepted) / len(decided), 2) if decided else None
+        )
+        _write_json(s.history_path, history)
     return {"ok": True, "recommendation_id": rec_id, "action": action}
 
 
@@ -199,6 +248,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, submit_feedback(body))
             else:
                 self._send(404, {"error": "not found"})
+        except FeedbackConflict as exc:
+            self._send(409, {"error": str(exc)})
         except ValueError as exc:
             self._send(400, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001 — surface, don't crash the demo server

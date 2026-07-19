@@ -12,7 +12,7 @@ python3 main.py                       # one interactive cycle
 python3 main.py --cycles 4 --simulate # scripted 4-run demo showing learning
 python3 main.py --metrics             # run-over-run improvement dashboard
 python3 main.py --reset               # wipe memory back to cold start
-python3 -m unittest -v                # test suite (16 tests, all offline)
+python3 -m unittest -v                # test suite (40 tests, all offline)
 ```
 
 Add `NVIDIA_API_KEY` to `.env` (see `.env.example`) to generate
@@ -29,6 +29,8 @@ everything fully functional.
     otherwise the JSON-file mock is used.
   - Agent 2: `python3 scripts/run_agent2_heartbeat.py` writes
     `memory/agent2/latest.json`; `main.py` consumes it automatically.
+    Without Supabase it runs standalone (handoff only, no episode logging);
+    with Supabase configured it also needs `AGENT_RUN_ID` set.
   - `python3 main.py --mock` forces the stubs for a deterministic demo.
 - **Dashboard**: `python3 scripts/serve_dashboard.py` (stdlib, port 8787)
   serves live agent state to the React app in `frontend/`

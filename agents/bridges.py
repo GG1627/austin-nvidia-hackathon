@@ -86,7 +86,14 @@ class HandoffResearchAgent:
 
     @staticmethod
     def available(handoff_path: str = DEFAULT_HANDOFF_PATH) -> bool:
-        return os.path.exists(handoff_path)
+        """A handoff is usable only when it parses and actually carries
+        opportunities — a failure snapshot with an empty list must not
+        shadow the mock research fallback."""
+        try:
+            with open(handoff_path, "r", encoding="utf-8") as fh:
+                return bool(json.load(fh).get("opportunities"))
+        except (OSError, json.JSONDecodeError):
+            return False
 
     def _load(self) -> Dict[str, Any]:
         try:

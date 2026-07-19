@@ -77,6 +77,7 @@ class ResearchAgent:
         http_client: Optional[httpx.Client] = None,
         memory_store: Any = None,
         max_per_source: int = 12,
+        max_llm_analyses: Optional[int] = None,
     ) -> None:
         self.ollama_url = (ollama_url or os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
         # NemoClaw is the secure runtime, not an Ollama model. This 4B
@@ -87,6 +88,11 @@ class ResearchAgent:
         self.youtube_api_key = youtube_api_key if youtube_api_key is not None else os.getenv("YOUTUBE_API_KEY", "")
         self.x_bearer_token = x_bearer_token if x_bearer_token is not None else os.getenv("X_BEARER_TOKEN", "")
         self.max_per_source = max_per_source
+        # A heartbeat can collect dozens of topic groups; running the local
+        # model on every one of them can take longer than the heartbeat
+        # interval. Only the strongest groups get an LLM analysis — the rest
+        # use the deterministic fallback.
+        self.max_llm_analyses = max_llm_analyses if max_llm_analyses is not None else int(os.getenv("AGENT2_MAX_LLM_ANALYSES", "10"))
         self._owns_client = http_client is None
         self._client = http_client or httpx.Client(timeout=12, follow_redirects=True)
         self.memory_store = memory_store
@@ -140,7 +146,7 @@ class ResearchAgent:
 
     def fetch_trends(self) -> list[RawSignal]:
         from tools.trends_tool import fetch_trends
-        return fetch_trends(self.max_per_source)
+        return fetch_trends(self._client, self.max_per_source)
 
     def fetch_github_trending(self) -> list[RawSignal]:
         from tools.world_sources import fetch_github_trending
@@ -169,9 +175,20 @@ class ResearchAgent:
         for signal in _deduplicate(signals):
             grouped.setdefault(_topic_key(signal.topic or signal.title), []).append(signal)
 
+        # Rank groups by cheap signal strength (corroboration, engagement) so
+        # the LLM budget goes to the most promising topics.
+        ranked_groups = sorted(
+            grouped.items(),
+            key=lambda kv: (len(kv[1]), max((s.engagement for s in kv[1]), default=0.0)),
+            reverse=True,
+        )
+        profile = _profile_dict(creator_context)
         opportunities: list[Opportunity] = []
-        for key, group in grouped.items():
-            analysis = self._analyse_group(group, creator_context)
+        for index, (key, group) in enumerate(ranked_groups):
+            if index < self.max_llm_analyses:
+                analysis = self._analyse_group(group, creator_context)
+            else:
+                analysis = self._fallback_analysis(group, profile)
             if not analysis:
                 continue
             topic = analysis["topic"]
