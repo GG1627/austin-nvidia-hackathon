@@ -36,6 +36,7 @@ def test_source_failure_does_not_stop_run(monkeypatch):
     monkeypatch.setattr(agent, "fetch_hn_signals", lambda: [signal("hacker_news", "Local LLM tools", "https://hn/a")])
     for name in ("fetch_trends", "fetch_github_trending", "fetch_nvidia_news", "fetch_tavily_signals"):
         monkeypatch.setattr(agent, name, lambda: [])
+    monkeypatch.setattr(agent, "_analyse_group", lambda group, ctx: {"topic": group[0].title, "suggested_angle": "x", "reasoning": "x", "niche_alignment": 50, "competition_gap": 50})
     results = agent.get_opportunities(context())
     assert results and "reddit" in agent.last_result.source_errors
 
@@ -87,6 +88,7 @@ def test_optional_social_source_failures_are_recorded(monkeypatch):
     monkeypatch.setattr(agent, "fetch_hn_signals", lambda: [signal("hacker_news", "Local LLM tools", "https://hn/a")])
     for name in ("fetch_reddit_signals", "fetch_trends", "fetch_github_trending", "fetch_nvidia_news", "fetch_tavily_signals"):
         monkeypatch.setattr(agent, name, lambda: [])
+    monkeypatch.setattr(agent, "_analyse_group", lambda group, ctx: {"topic": group[0].title, "suggested_angle": "x", "reasoning": "x", "niche_alignment": 50, "competition_gap": 50})
     assert agent.get_opportunities(context())
     assert {"youtube", "x"} <= set(agent.last_result.source_errors)
 
@@ -98,6 +100,7 @@ def test_x_is_disabled_by_default(monkeypatch):
     monkeypatch.setattr(agent, "fetch_hn_signals", lambda: [signal("hacker_news", "Local LLM tools", "https://hn/a")])
     for name in ("fetch_reddit_signals", "fetch_trends", "fetch_github_trending", "fetch_nvidia_news", "fetch_tavily_signals", "fetch_youtube_signals"):
         monkeypatch.setattr(agent, name, lambda: [])
+    monkeypatch.setattr(agent, "_analyse_group", lambda group, ctx: {"topic": group[0].title, "suggested_angle": "x", "reasoning": "x", "niche_alignment": 50, "competition_gap": 50})
     assert agent.get_opportunities(context())
     assert "x" not in agent.last_result.source_errors
 
@@ -120,6 +123,41 @@ def test_nemoclaw_openai_compatible_inference_route():
         agent = ResearchAgent(http_client=client, inference_base_url="https://inference.local/v1", ollama_model="nemotron-3-nano:30b")
         analysis = agent._analyse_group([signal("hn", "AI agents", "https://hn/a")], context())
     assert analysis["topic"] == "AI agents"
+
+
+def test_stress_ranks_ten_plus_opportunities_correctly_and_stably(monkeypatch):
+    """Phase 4 stress test: 10+ candidate opportunities in, composite ranking correct and stable."""
+    agent = ResearchAgent()
+    # Deliberately out of score order so a passing test proves get_opportunities()
+    # actually sorts rather than happening to preserve input order.
+    shuffled_scores = [42, 97, 5, 88, 61, 15, 73, 29, 100, 8, 54, 66]
+    topics = [f"Topic {i}" for i in range(len(shuffled_scores))]
+    fetched = [signal("hacker_news", t, f"https://hn/{i}") for i, t in enumerate(topics)]
+
+    monkeypatch.setattr(agent, "fetch_hn_signals", lambda: fetched)
+    for name in ("fetch_reddit_signals", "fetch_trends", "fetch_github_trending", "fetch_nvidia_news", "fetch_tavily_signals", "fetch_youtube_signals"):
+        monkeypatch.setattr(agent, name, lambda: [])
+    monkeypatch.setattr(agent, "_analyse_group", lambda group, ctx: {
+        "topic": group[0].title, "suggested_angle": "angle", "reasoning": "stress", "niche_alignment": 50, "competition_gap": 50,
+    })
+
+    def fake_scores(group, analysis, creator_context):
+        idx = topics.index(analysis["topic"])
+        return float(shuffled_scores[idx]), 50.0, 50.0, 50.0
+    monkeypatch.setattr(agent, "_scores", fake_scores)
+
+    opportunities = agent.get_opportunities(context(), top_n=20)
+
+    assert len(opportunities) == len(shuffled_scores)
+    expected_order = [t for _, t in sorted(zip(shuffled_scores, topics), reverse=True)]
+    assert [o.topic for o in opportunities] == expected_order
+    scores = [o.composite_score for o in opportunities]
+    assert scores == sorted(scores, reverse=True)
+
+    # Re-running against identical input must yield an identical ranking, not just
+    # a correct one — the ranking has to be deterministic/stable across runs.
+    opportunities_again = agent.get_opportunities(context(), top_n=20)
+    assert [o.id for o in opportunities_again] == [o.id for o in opportunities]
 
 
 def test_malformed_llm_json_uses_grounded_fallback(monkeypatch):

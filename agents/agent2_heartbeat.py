@@ -74,15 +74,18 @@ class Agent2Heartbeat:
         """Wake on a stable interval until stopped; exceptions do not kill the loop."""
         stopper = stop_event or Event()
         while not stopper.is_set():
+            run_id: int | str | None = None
             try:
-                self.run_once(run_id_provider())
+                run_id = run_id_provider()
+                self.run_once(run_id)
             except Exception as exc:
-                self._write_failure(str(exc))
+                self._write_failure(str(exc), run_id)
             stopper.wait(self.interval_seconds)
 
-    def _write_failure(self, error: str) -> None:
+    def _write_failure(self, error: str, run_id: int | str | None = None) -> None:
         payload = {
             "schema_version": "agent2-handoff/v1",
+            "run_id": run_id,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "producer": {"agent": "agent2_research", "model": self.research_agent.ollama_model},
             "source_errors": {"heartbeat": error},

@@ -119,3 +119,4 @@ as $$
   order by insights.embedding <=> query_embedding
   limit match_count;
 $$;
+

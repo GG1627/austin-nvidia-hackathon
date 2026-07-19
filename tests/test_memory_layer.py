@@ -21,6 +21,7 @@ Run with:
 """
 from __future__ import annotations
 
+from dataclasses import asdict
 import os
 import sys
 import unittest
@@ -29,7 +30,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tests.fakes import FakeSupabaseClient, fake_embed
-from agents.models import OnboardingFindingPayload
+from agents.models import FeedbackPayload, OnboardingFindingPayload
 from agents.consolidation import (
     _apply_support,
     _apply_contradict,
@@ -264,6 +265,118 @@ class TestGetContextEmptyStore(unittest.TestCase):
         self.assertEqual(ctx["relevant_insights"], [])
         self.assertEqual(ctx["related_entities"], [])
         self.assertIsNone(ctx["last_run"])
+
+
+# ---------------------------------------------------------------------------
+# Persistence-across-restart regression (Workstream A1 success criterion).
+#
+# This fake-backed version guards against a regression where get_context() or
+# log_episode() start depending on in-process state instead of the DB. The
+# real guarantee — that a genuinely new OS process reconnecting to Supabase
+# still sees the data — needs a live round-trip; see the opt-in `-m live`
+# test in tests/test_live_persistence.py.
+# ---------------------------------------------------------------------------
+
+
+class TestPersistenceAcrossSimulatedRestart(unittest.TestCase):
+    def test_get_context_after_dropping_client_singleton_still_sees_seeded_insights(self):
+        fake_db = FakeSupabaseClient()
+        with mock.patch("agents.consolidation.get_client", return_value=fake_db), \
+             mock.patch("agents.memory.get_client", return_value=fake_db), \
+             mock.patch("agents.onboarding.get_client", return_value=fake_db), \
+             mock.patch("agents.consolidation.propose_consolidation", side_effect=_propose_long_video_pattern):
+            run_onboarding("Test Creator", {"niche": "AI tools"}, _catalog())
+
+        # Simulate a fresh process: drop the cached client singleton exactly as
+        # agents/db.py holds it at import time, then reconnect to the same durable
+        # store and read back through the public get_context() door only.
+        import agents.db as db_module
+        previous_client = db_module._client
+        db_module._client = None
+        try:
+            with mock.patch("agents.consolidation.get_client", return_value=fake_db), \
+                 mock.patch("agents.memory.get_client", return_value=fake_db):
+                ctx = get_context("what should this creator make next?")
+        finally:
+            db_module._client = previous_client
+
+        self.assertEqual(ctx["creator_profile"].get("niche"), "AI tools")
+        self.assertEqual(len(ctx["relevant_insights"]), 1)
+        self.assertEqual(ctx["relevant_insights"][0]["status"], "hypothesis")
+
+
+# ---------------------------------------------------------------------------
+# Multi-cycle feedback learning — "system measurably improves" criterion,
+# provable without Agent 3 by logging FeedbackPayloads directly (Workstream B).
+# ---------------------------------------------------------------------------
+
+
+class TestMultiCycleFeedbackLearning(unittest.TestCase):
+    def setUp(self):
+        self.fake_db = FakeSupabaseClient()
+        self.patchers = [
+            mock.patch("agents.consolidation.get_client", return_value=self.fake_db),
+            mock.patch("agents.memory.get_client", return_value=self.fake_db),
+        ]
+        for p in self.patchers:
+            p.start()
+        self.addCleanup(lambda: [p.stop() for p in self.patchers])
+
+    def test_repeated_accepted_feedback_raises_confidence_and_promotes_over_cycles(self):
+        run_row = self.fake_db.insert("runs", {"metrics": {}})
+        run_id = run_row["id"]
+
+        seed = self.fake_db.insert("insights", {
+            "statement": "Short benchmark videos outperform long-form videos",
+            "category": "format",
+            "confidence": 0.30,
+            "status": "hypothesis",
+            "evidence_for": 0,
+            "evidence_against": 0,
+            "supporting_episode_ids": [],
+            "volatility": "semi_stable",
+            "expires_at": None,
+            "created_run": run_id,
+            "last_updated_run": run_id,
+            "embedding": None,
+        })
+        insight_id = seed["id"]
+
+        confidences: list[float] = []
+        statuses: list[str] = []
+        status_rank = {"hypothesis": 0, "validated": 1, "core": 2}
+
+        for cycle in range(12):
+            feedback = FeedbackPayload(
+                recommendation_episode_id=100 + cycle,
+                action="accepted",
+                creator_note=f"cycle {cycle}",
+            )
+            episode_id = log_episode("feedback", asdict(feedback), run_id)
+
+            def propose_support(episodes_compact, active_compact, _eid=episode_id, _iid=insight_id):
+                return {
+                    "new_hypotheses": [],
+                    "evidence_updates": [{"insight_id": _iid, "direction": "support", "episode_id": _eid}],
+                    "contradictions": [],
+                }
+
+            with mock.patch("agents.consolidation.propose_consolidation", side_effect=propose_support), \
+                 mock.patch("agents.consolidation.calibrate_batch", return_value={}):
+                run_consolidation(run_id=run_id, onboarding=False)
+
+            row = next(r for r in self.fake_db.tables["insights"] if r["id"] == insight_id)
+            confidences.append(row["confidence"])
+            statuses.append(row["status"])
+
+        # Confidence rises every single cycle — the "measurably improves" criterion.
+        self.assertTrue(all(confidences[i] < confidences[i + 1] for i in range(len(confidences) - 1)))
+
+        # Promotion only ever moves forward (hypothesis -> validated -> core), never backward.
+        ranks = [status_rank[s] for s in statuses]
+        self.assertEqual(ranks, sorted(ranks))
+        self.assertEqual(statuses[-1], "core")
+        self.assertGreater(confidences[-1], 0.85)
 
 
 if __name__ == "__main__":

@@ -187,16 +187,19 @@ class ResearchAgent:
     def _analyse_group(self, group: list[RawSignal], creator_context: Any) -> Optional[dict[str, Any]]:
         profile = _profile_dict(creator_context)
         payload = {"creator_profile": profile, "signals": [asdict(s) for s in group]}
-        prompt = self.system_prompt + "\n" + json.dumps(payload)
         try:
             if self.inference_base_url:
                 response = self._client.post(f"{self.inference_base_url}/chat/completions", json={"model": self.ollama_model, "messages": [{"role": "system", "content": self.system_prompt}, {"role": "user", "content": json.dumps(payload)}], "response_format": {"type": "json_object"}}, timeout=45)
                 response.raise_for_status()
                 data = json.loads(response.json()["choices"][0]["message"]["content"])
             else:
-                response = self._client.post(f"{self.ollama_url}/api/generate", json={"model": self.ollama_model, "prompt": prompt, "stream": False, "format": "json"}, timeout=45)
+                # /api/chat, not /api/generate: reasoning models (e.g. nemotron-3-nano) route
+                # their whole answer into a separate "thinking" field under /api/generate's flat
+                # prompt mode, leaving "response" empty. /api/chat's message-role framing is what
+                # actually gets the JSON answer into the message content.
+                response = self._client.post(f"{self.ollama_url}/api/chat", json={"model": self.ollama_model, "messages": [{"role": "system", "content": self.system_prompt}, {"role": "user", "content": json.dumps(payload)}], "stream": False, "format": "json"}, timeout=45)
                 response.raise_for_status()
-                data = json.loads(response.json()["response"])
+                data = json.loads(response.json()["message"]["content"])
             if not all(isinstance(data.get(k), str) and data[k].strip() for k in ("topic", "suggested_angle", "reasoning")):
                 return self._fallback_analysis(group, profile)
             return data

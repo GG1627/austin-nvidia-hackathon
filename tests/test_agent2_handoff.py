@@ -2,9 +2,19 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event, Thread
+import time
+
+import pytest
 
 from agents.agent2_heartbeat import Agent2Heartbeat
-from agents.agent2_handoff import HANDOFF_SCHEMA_VERSION, build_handoff, write_latest_handoff
+from agents.agent2_handoff import (
+    HANDOFF_SCHEMA_VERSION,
+    UnsupportedHandoffVersion,
+    build_handoff,
+    validate_schema_version,
+    write_latest_handoff,
+)
 from agents.agent2_research import Opportunity, ResearchAgent, ResearchResult, _profile_dict
 
 
@@ -54,6 +64,28 @@ def test_handoff_is_versioned_and_preserves_agent3_fields():
         assert (root / "history" / "42.json").exists()
 
 
+def test_validate_schema_version_accepts_current_version():
+    payload = build_handoff([], run_id=1, source_errors={}, creator_context={}, model="m")
+    validate_schema_version(payload)  # must not raise
+
+
+@pytest.mark.parametrize("version", [
+    "agent2-handoff/v2",
+    "agent2-handoff/v0",
+    "other-schema/v1",
+    "not-a-version-string",
+    "",
+])
+def test_validate_schema_version_rejects_unknown_majors(version):
+    with pytest.raises(UnsupportedHandoffVersion):
+        validate_schema_version({"schema_version": version})
+
+
+def test_validate_schema_version_rejects_missing_field():
+    with pytest.raises(UnsupportedHandoffVersion):
+        validate_schema_version({})
+
+
 def test_heartbeat_logs_agent2_findings_via_injected_agent1_interface():
     episodes = []
     context = {
@@ -78,6 +110,44 @@ def test_heartbeat_logs_agent2_findings_via_injected_agent1_interface():
         assert payload["heartbeat"]["research_findings_logged"] == 1
         assert episodes == [("research_finding", asdict(ResearchAgent.to_research_finding(opportunity())), 17)]
         assert json.loads((root / "latest.json").read_text())["run_id"] == 17
+
+
+def test_run_forever_survives_failures_and_writes_a_valid_error_snapshot():
+    """A2 heartbeat's failure path (sprint2.md A4): a research-agent exception must not
+    kill run_forever's loop, and _write_failure()'s payload must satisfy write_latest_handoff()'s
+    own contract (a run_id, so the history/<run_id>.json snapshot can be named) -- previously
+    _write_failure() omitted run_id entirely, so the "safe" failure path itself raised
+    KeyError and took the loop down with it."""
+
+    class BrokenResearchAgent:
+        ollama_model = "nemotron-test"
+
+        def get_opportunities(self, creator_context, top_n=5):
+            raise RuntimeError("simulated live failure: research agent unreachable")
+
+    with TemporaryDirectory(dir=Path.cwd()) as directory:
+        root = Path(directory)
+        heartbeat = Agent2Heartbeat(
+            BrokenResearchAgent(),
+            context_provider=lambda: {"creator_profile": {}},
+            episode_logger=lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not log on failure")),
+            handoff_directory=root,
+            interval_seconds=1,
+        )
+
+        stop_event = Event()
+        thread = Thread(target=heartbeat.run_forever, args=(lambda: 999,), kwargs={"stop_event": stop_event})
+        thread.start()
+        time.sleep(2.5)  # long enough for at least two failed ticks at interval_seconds=1
+        stop_event.set()
+        thread.join(timeout=5)
+
+        assert not thread.is_alive()  # the loop kept running through repeated failures, then stopped cleanly
+        latest = json.loads((root / "latest.json").read_text())
+        assert latest["run_id"] == 999
+        assert "simulated live failure" in latest["source_errors"]["heartbeat"]
+        assert (root / "history" / "999.json").exists()
+        validate_schema_version(latest)  # the error snapshot is itself a valid handoff payload
 
 
 def test_agent1_insights_are_consumed_as_research_context():

@@ -18,6 +18,31 @@ from agents.agent2_research import Opportunity
 HANDOFF_SCHEMA_VERSION = "agent2-handoff/v1"
 
 
+class UnsupportedHandoffVersion(ValueError):
+    """Raised when a handoff payload's schema_version major isn't one this consumer understands."""
+
+
+def _schema_major(version: str) -> str:
+    return version.split("/", 1)[-1] if "/" in version else version
+
+
+def validate_schema_version(payload: dict[str, Any]) -> None:
+    """Reject a handoff payload whose schema_version major this consumer doesn't understand.
+
+    Per docs/AGENT2_HANDOFF.md: "Consumers must reject unknown major versions rather than
+    silently guessing field meanings." Agent 3 (or any other consumer) should call this
+    before trusting `payload["opportunities"]` / `payload["context_basis"]` field shapes.
+    """
+    version = payload.get("schema_version")
+    if not isinstance(version, str) or not version.startswith("agent2-handoff/"):
+        raise UnsupportedHandoffVersion(f"Unrecognized handoff schema_version: {version!r}")
+    if _schema_major(version) != _schema_major(HANDOFF_SCHEMA_VERSION):
+        raise UnsupportedHandoffVersion(
+            f"Unsupported handoff schema_version: {version!r} "
+            f"(this consumer understands {HANDOFF_SCHEMA_VERSION!r})"
+        )
+
+
 def build_handoff(
     opportunities: Iterable[Opportunity],
     *,
