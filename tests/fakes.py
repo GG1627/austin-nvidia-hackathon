@@ -59,11 +59,20 @@ class FakeSupabaseClient:
         if order:
             col, _, direction = order.partition(".")
             rows.sort(key=lambda r: r.get(col) or 0, reverse=(direction == "desc"))
-        return rows[:limit]
+        # Copies, like the real client: PostgREST returns fresh JSON, so later
+        # writes are never visible through previously selected rows.
+        return [dict(r) for r in rows[:limit]]
 
     def update(self, table: str, match: dict, data: dict) -> list:
         cond = {k: f"eq.{v}" for k, v in match.items()}
         rows = [r for r in self.tables[table] if self._match(r, cond)]
+        for r in rows:
+            r.update(data)
+        return rows
+
+    def update_in(self, table: str, column: str, values: list, data: dict) -> list:
+        wanted = {_to_str(v) for v in values}
+        rows = [r for r in self.tables[table] if _to_str(r.get(column)) in wanted]
         for r in rows:
             r.update(data)
         return rows

@@ -14,12 +14,6 @@ import json
 import os
 from typing import List, Union
 
-# NVIDIA-hosted nemotron-3-embed-1b by default (OpenAI-compatible /v1/embeddings
-# at integrate.api.nvidia.com). Point these at a self-hosted vLLM instead, e.g.:
-#   vllm serve Qwen/Qwen3-Embedding-0.6B --port 8002 --task embed
-VLLM_EMBEDDING_BASE_URL = os.getenv("VLLM_EMBEDDING_BASE_URL", "")
-VLLM_EMBEDDING_MODEL = os.getenv("VLLM_EMBEDDING_MODEL", "nvidia/nemotron-3-embed-1b")
-VLLM_EMBEDDING_API_KEY = os.getenv("VLLM_EMBEDDING_API_KEY", "")
 EMBEDDING_DIM = 2048
 
 
@@ -31,19 +25,29 @@ def embed(text: str, input_type: str = "passage") -> List[float]:
     ranking against that index in get_context). nemotron-3-embed-1b requires
     this to avoid accuracy loss; other OpenAI-compatible servers ignore it.
     """
-    if not VLLM_EMBEDDING_BASE_URL:
+    # Env is read per call, not at import time, so import order relative to
+    # load_env() doesn't matter. Point these at a self-hosted vLLM instead
+    # of the NVIDIA-hosted default, e.g.:
+    #   vllm serve Qwen/Qwen3-Embedding-0.6B --port 8002 --task embed
+    base_url = os.getenv("VLLM_EMBEDDING_BASE_URL", "")
+    if not base_url:
         # Stub: deterministic zero vector for offline tests / no endpoint yet.
         return [0.0] * EMBEDDING_DIM
 
     try:
         import httpx
         headers = {"Content-Type": "application/json"}
-        if VLLM_EMBEDDING_API_KEY:
-            headers["Authorization"] = f"Bearer {VLLM_EMBEDDING_API_KEY}"
+        api_key = os.getenv("VLLM_EMBEDDING_API_KEY", "")
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         r = httpx.post(
-            f"{VLLM_EMBEDDING_BASE_URL.rstrip('/')}/embeddings",
+            f"{base_url.rstrip('/')}/embeddings",
             headers=headers,
-            json={"model": VLLM_EMBEDDING_MODEL, "input": text, "input_type": input_type},
+            json={
+                "model": os.getenv("VLLM_EMBEDDING_MODEL", "nvidia/nemotron-3-embed-1b"),
+                "input": text,
+                "input_type": input_type,
+            },
             timeout=20,
         )
         r.raise_for_status()

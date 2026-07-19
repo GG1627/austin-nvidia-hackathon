@@ -1,5 +1,6 @@
 """Hacker News and Google Trends connectors for Agent 2."""
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 from email.utils import parsedate_to_datetime
@@ -13,10 +14,19 @@ TRENDS_NS = {"ht": "https://trends.google.com/trending/rss"}
 def fetch_hn_signals(client, max_per_source):
     from agents.agent2_research import RawSignal, _unix_iso, _valid_signals
     response = client.get(HN_TOP_URL); response.raise_for_status()
+    story_ids = response.json()[:max_per_source]
+
+    def fetch_item(story_id):
+        r = client.get(HN_ITEM_URL.format(id=story_id)); r.raise_for_status()
+        return r.json()
+
+    # The item endpoint only serves one story per request; fetch them
+    # concurrently (httpx.Client is thread-safe) but keep top-story order.
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(story_ids)))) as pool:
+        items = list(pool.map(fetch_item, story_ids))
+
     signals = []
-    for story_id in response.json()[:max_per_source]:
-        response = client.get(HN_ITEM_URL.format(id=story_id)); response.raise_for_status()
-        data = response.json()
+    for story_id, data in zip(story_ids, items):
         if data and data.get("type") == "story":
             signals.append(RawSignal("hacker_news", data.get("title", ""), data.get("url") or f"https://news.ycombinator.com/item?id={story_id}", _unix_iso(data.get("time")), float(data.get("score", 0)) + float(data.get("descendants", 0)), raw_evidence=data.get("text", "")[:800]))
     return _valid_signals(signals)

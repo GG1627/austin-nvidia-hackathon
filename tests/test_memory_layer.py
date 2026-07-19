@@ -266,5 +266,50 @@ class TestGetContextEmptyStore(unittest.TestCase):
         self.assertIsNone(ctx["last_run"])
 
 
+class TestRepeatedUpdatesInOnePass(unittest.TestCase):
+    """Several evidence updates for the same insight in one batch must
+    compound — each builds on the previous write, not on the values the
+    row had when the pass started."""
+
+    def setUp(self):
+        self.fake_db = FakeSupabaseClient()
+        self.patchers = [
+            mock.patch("agents.consolidation.get_client", return_value=self.fake_db),
+            mock.patch("agents.memory.get_client", return_value=self.fake_db),
+        ]
+        for p in self.patchers:
+            p.start()
+        self.addCleanup(lambda: [p.stop() for p in self.patchers])
+
+    def test_two_supports_for_same_insight_both_land(self):
+        insight = self.fake_db.insert("insights", {
+            "statement": LONG_VIDEO_STATEMENT, "category": "timing",
+            "confidence": 0.30, "status": "hypothesis",
+            "evidence_for": 0, "evidence_against": 0,
+            "supporting_episode_ids": [], "volatility": "semi_stable",
+        })
+        e1 = log_episode("observation", {"note": "long video underperformed"}, 1)
+        e2 = log_episode("observation", {"note": "another long video underperformed"}, 1)
+
+        def propose_two_supports(episodes_compact, active_compact):
+            return {
+                "new_hypotheses": [],
+                "evidence_updates": [
+                    {"insight_id": insight["id"], "direction": "support", "episode_id": e1},
+                    {"insight_id": insight["id"], "direction": "support", "episode_id": e2},
+                ],
+                "contradictions": [],
+            }
+
+        with mock.patch("agents.consolidation.propose_consolidation", side_effect=propose_two_supports):
+            run_consolidation(run_id=1)
+
+        row = self.fake_db.tables["insights"][0]
+        self.assertEqual(row["evidence_for"], 2)
+        expected = _apply_support(_apply_support(0.30))
+        self.assertAlmostEqual(row["confidence"], expected, places=5)
+        self.assertEqual(sorted(row["supporting_episode_ids"]), sorted([e1, e2]))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
