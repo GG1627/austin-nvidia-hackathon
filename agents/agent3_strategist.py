@@ -85,7 +85,9 @@ class StrategistAgent:
     # ------------------------------------------------------------------
 
     def run_cycle(
-        self, feedback_provider: Optional[FeedbackProvider] = None
+        self,
+        feedback_provider: Optional[FeedbackProvider] = None,
+        collect_feedback: bool = True,
     ) -> CycleResult:
         """Execute one full recursive loop and log it.
 
@@ -95,6 +97,11 @@ class StrategistAgent:
         4. Present to creator
         5. Collect feedback
         6. Push learnings back to Agent 1
+
+        With collect_feedback=False (the dashboard flow) steps 5-6 are
+        skipped entirely: no synthetic feedback is fabricated, nothing is
+        ingested into memory, and the creator's real votes arrive later
+        through the /api/feedback endpoint.
         """
         run_number = self._next_run_number()
         self._print(f"\n{'=' * 62}")
@@ -126,13 +133,25 @@ class StrategistAgent:
             f"via {self.last_engine}"
         )
 
-        self._mark_surfaced(recommendations)
         self.present_recommendations(recommendations, opportunities)
-        feedback = self.collect_feedback(recommendations, feedback_provider)
+        feedback: List[Feedback] = []
+        if collect_feedback:
+            feedback = self.collect_feedback(recommendations, feedback_provider)
 
+        # Only opportunities the creator actually responded to count as
+        # surfaced; unanswered recommendations may resurface next cycle.
         recs_by_id = {r.id: r for r in recommendations}
+        self._mark_surfaced(
+            [recs_by_id[fb.recommendation_id] for fb in feedback
+             if fb.recommendation_id in recs_by_id]
+        )
         for fb in feedback:
             self._ingest_feedback(fb, recs_by_id.get(fb.recommendation_id))
+
+        # Memory layers with a consolidation engine (the real Agent 1) turn the
+        # cycle's episodes into insights now, so the next run starts smarter.
+        if hasattr(self.memory, "consolidate"):
+            self.memory.consolidate()
 
         self._show_learning_summary(patterns_before)
 
@@ -151,7 +170,9 @@ class StrategistAgent:
 
     def _next_run_number(self) -> int:
         if hasattr(self.memory, "increment_run_count"):
-            return self.memory.increment_run_count()
+            run_number = self.memory.increment_run_count()
+            if run_number:  # 0 means the backing store was unreachable
+                return run_number
         return len(self._load_history()) + 1
 
     def _mark_surfaced(self, recommendations: Sequence[Recommendation]) -> None:
@@ -577,8 +598,10 @@ class StrategistAgent:
         history = self._load_history()
         history.append(result)
         os.makedirs(os.path.dirname(self.history_path) or ".", exist_ok=True)
-        with open(self.history_path, "w", encoding="utf-8") as fh:
+        tmp_path = self.history_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as fh:
             json.dump({"runs": [r.to_dict() for r in history]}, fh, indent=2)
+        os.replace(tmp_path, self.history_path)
 
     def show_improvement_metrics(self) -> None:
         """Run-over-run dashboard proving the system is getting smarter."""

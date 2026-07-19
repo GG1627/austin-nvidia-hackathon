@@ -140,14 +140,14 @@ goes through `log_episode()` / `get_context()`.
 
 | Layer | Technology | Rationale |
 |-------|-----------|----------|
-| LLM Inference | NVIDIA NIM (Nemotron) | Hackathon requirement, fast inference |
-| Orchestration | Python 3.11 | Simple, fast to build |
-| Memory Store | Supabase (Postgres + pgvector) | Durable, Realtime dashboard, native vector search |
-| Reddit | PRAW | Official Python Reddit API wrapper |
-| Trends | pytrends | Google Trends Python client |
-| Web Search | Tavily API | Fast structured search results |
-| UI | Streamlit (optional) | Rapid prototyping |
-| Environment | python-dotenv | Standard .env management |
+| LLM Inference | NVIDIA NIM (Nemotron) for Agent 3; local Ollama / OpenAI-compatible endpoint for Agent 2 | Hackathon requirement, fast inference; deterministic fallbacks keep the demo alive offline |
+| Embeddings | nemotron-3-embed-1b (2048-dim, OpenAI-compatible /v1/embeddings) | Matches db/schema.sql `vector(2048)`; zero-vector stub offline |
+| Orchestration | Python 3.11 (stdlib + httpx only) | Simple, fast to build, near-zero installs |
+| Memory Store | Supabase (Postgres + pgvector) with a JSON-file mock fallback | Durable, native vector search; mock keeps everything runnable without keys |
+| Research connectors | httpx against Reddit (OAuth or public JSON), HN Firebase API, Google Trends RSS, GitHub trending, NVIDIA newsroom RSS, Tavily, YouTube Data API | No heavyweight SDKs; every source is best-effort |
+| Dashboard API | stdlib http.server (`scripts/serve_dashboard.py`) | Zero-install HTTP shim over the real agents |
+| UI | React + Vite + TypeScript (`frontend/`) | Live dashboard; Vite dev server proxies /api |
+| Environment | tools/nim_client.load_env (tiny .env parser) | python-dotenv optional |
 
 ---
 
@@ -155,33 +155,49 @@ goes through `log_episode()` / `get_context()`.
 
 ```
 austin-nvidia-hackathon/
-├── main.py                    # Entry point
+├── main.py                     # Entry point (CLI cycles, metrics, reset)
 ├── requirements.txt
 ├── .env.example
 ├── db/
-│   └── schema.sql             # Supabase/pgvector schema + match_insights RPC
+│   └── schema.sql              # Supabase/pgvector schema + match_insights RPC
 ├── agents/
+│   ├── contracts.py            # Shared dataclasses (Opportunity, Recommendation, …)
 │   ├── models.py               # Agent 1: frozen payload contracts + table dataclasses
 │   ├── db.py                   # Agent 1: Supabase REST client
-│   ├── embeddings.py           # Agent 1: vLLM embeddings + cosine helpers
+│   ├── embeddings.py           # Agent 1: embeddings client + cosine helpers
 │   ├── llm.py                  # Agent 1: Nemotron proposer + vLLM calibration
 │   ├── consolidation.py        # Agent 1: batch consolidation engine
 │   ├── memory.py               # Agent 1: log_episode() / get_context()
 │   ├── onboarding.py           # Agent 1: onboarding bootstrap
-│   ├── agent2_research.py      # Research & Opportunity Agent
-│   └── agent3_strategist.py    # Strategist / Execution Agent
+│   ├── agent2_research.py      # Agent 2: connectors, scoring, opportunities
+│   ├── agent2_handoff.py       # Agent 2: versioned handoff artifact writer
+│   ├── agent2_heartbeat.py     # Agent 2: interval runner with failure recovery
+│   ├── agent3_strategist.py    # Agent 3: recommendation engine + cycle loop
+│   ├── bridges.py              # Wiring: real Agent 1/2 ↔ Agent 3 adapters
+│   └── stubs.py                # Mock Agent 1/2 for keyless offline demo
 ├── scripts/
-│   └── seed_onboarding.py     # Agent 1: end-to-end onboarding proof
+│   ├── seed_onboarding.py      # Agent 1: end-to-end onboarding proof
+│   ├── run_agent2_heartbeat.py # Agent 2: heartbeat (Supabase or standalone)
+│   └── serve_dashboard.py      # stdlib HTTP API for the React dashboard
 ├── tools/
-│   ├── reddit_tool.py          # Reddit connector
-│   ├── trends_tool.py          # Google Trends + HN
-│   └── youtube_tool.py         # YouTube trending
+│   ├── nim_client.py           # NVIDIA NIM chat client + .env loader
+│   ├── reddit_tool.py          # Reddit connector (OAuth or public JSON)
+│   ├── trends_tool.py          # Google Trends RSS + Hacker News
+│   ├── world_sources.py        # GitHub trending, NVIDIA RSS, Tavily
+│   └── social_sources.py       # YouTube, X (optional)
+├── frontend/                   # React + Vite dashboard ("lore")
+│   └── src/                    # App.tsx, Pages.tsx, Flow.tsx, lib/api.ts
 ├── prompts/
 │   ├── agent2_system.txt
 │   └── agent3_system.txt
 ├── tests/
 │   ├── fakes.py                # In-memory Supabase fake for offline tests
-│   └── test_memory_layer.py    # Agent 1 unit tests
+│   ├── test_memory_layer.py    # Agent 1 unit tests
+│   ├── test_agent2.py          # Agent 2 unit tests
+│   ├── test_agent2_handoff.py  # Handoff artifact tests
+│   ├── test_agent3.py          # Agent 3 + CLI tests
+│   ├── test_bridges.py         # Wiring/adapter tests
+│   └── test_dashboard_api.py   # Dashboard HTTP shim tests
 └── docs/
     ├── IMPLEMENTATION_PLAN.md
     ├── ROLES.md

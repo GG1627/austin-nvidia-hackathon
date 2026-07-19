@@ -93,8 +93,10 @@ class MockMemoryAgent:
     def save(self) -> None:
         self.graph["last_updated"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
         os.makedirs(os.path.dirname(self.graph_path) or ".", exist_ok=True)
-        with open(self.graph_path, "w", encoding="utf-8") as fh:
+        tmp_path = self.graph_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as fh:
             json.dump(self.graph, fh, indent=2)
+        os.replace(tmp_path, self.graph_path)
 
     # -- Agent 1 public API (documented contract) ---------------------------
 
@@ -184,6 +186,12 @@ class MockMemoryAgent:
                         }
                     )
         # "deferred" is recorded in history but does not move confidence.
+        self.save()
+
+    def update_profile(self, attrs: Dict[str, str]) -> None:
+        """Onboarding hook: merge non-empty creator attributes into the profile."""
+        profile = self.graph.setdefault("creator_profile", {})
+        profile.update({k: v for k, v in attrs.items() if v})
         self.save()
 
     # -- helpers used by Agent 2 (dedup) and Agent 3 (metrics) --------------

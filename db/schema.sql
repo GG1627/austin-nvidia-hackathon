@@ -22,7 +22,7 @@ create table if not exists episodes (
     ('observation','recommendation','outcome','feedback','research_finding','onboarding_finding')),
   payload jsonb not null,
   consolidated boolean not null default false,
-  embedding vector(1024)
+  embedding vector(2048)
 );
 
 create table if not exists insights (
@@ -39,7 +39,7 @@ create table if not exists insights (
   expires_at timestamptz,
   created_run bigint,
   last_updated_run bigint,
-  embedding vector(1024)
+  embedding vector(2048)
 );
 
 create table if not exists nodes (
@@ -65,10 +65,9 @@ create table if not exists insight_snapshots (
   insights jsonb not null
 );
 
-create index if not exists episodes_embedding_idx on episodes
-  using hnsw (embedding vector_cosine_ops);
-create index if not exists insights_embedding_idx on insights
-  using hnsw (embedding vector_cosine_ops);
+-- No HNSW/IVFFlat index on embedding: pgvector caps indexed vectors at 2000
+-- dims and nemotron-3-embed-1b outputs 2048. match_insights/consolidation
+-- fall back to a sequential scan, which is fine at demo scale.
 
 create index if not exists episodes_consolidated_idx on episodes (consolidated) where not consolidated;
 create index if not exists insights_status_idx on insights (status);
@@ -86,7 +85,7 @@ alter publication supabase_realtime add table edges;
 -- ---------------------------------------------------------------------
 
 create or replace function match_insights(
-  query_embedding vector(1024),
+  query_embedding vector(2048),
   match_threshold real default 0.0,
   match_count int default 10,
   exclude_status text default 'deprecated'

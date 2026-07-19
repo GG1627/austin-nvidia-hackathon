@@ -76,7 +76,7 @@ def get_context(task: str, token_budget: int = 4000) -> dict:
 
     # 2. Relevant insights — pgvector match against the task, falling back to a
     #    local cosine ranking if the RPC isn't reachable (e.g. offline demo).
-    task_emb = embed(task)
+    task_emb = embed(task, input_type="query")
     seen_ids = {i["id"] for i in result["core_insights"]}
     ranked: list[dict] = []
     if not any(task_emb):

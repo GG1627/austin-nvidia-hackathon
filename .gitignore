@@ -7,3 +7,8 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+
+# Runtime memory state (creator_profile.json stays tracked as the seed)
+memory/knowledge_graph.json
+memory/cycle_history.json
+memory/agent2/
