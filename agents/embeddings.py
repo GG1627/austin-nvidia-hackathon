@@ -1,29 +1,38 @@
 """
-Agent 1 - Embedding client via a self-hosted vLLM instance (OpenAI-compatible
-/v1/embeddings). Falls back to a zero-vector stub when VLLM_EMBEDDING_BASE_URL
-isn't set, so unit tests and offline runs work without a live GPU box.
+Agent 1 - Embedding client, OpenAI-compatible /v1/embeddings. Defaults to
+NVIDIA's hosted nemotron-3-embed-1b (via integrate.api.nvidia.com) but works
+against any OpenAI-compatible embeddings endpoint, including a self-hosted
+vLLM instance. Falls back to a zero-vector stub when VLLM_EMBEDDING_BASE_URL
+isn't set, so unit tests and offline runs work without a live endpoint.
 
-EMBEDDING_DIM must match db/schema.sql's `vector(1024)` columns — if you
+EMBEDDING_DIM must match db/schema.sql's `vector(2048)` columns — if you
 change VLLM_EMBEDDING_MODEL to something with a different output dimension,
-update the schema's vector(1024) columns (and reindex) to match.
+update the schema's vector(2048) columns (and reindex) to match.
 """
 from __future__ import annotations
 import json
 import os
 from typing import List, Union
 
-# Self-hosted vLLM instance serving an embedding model, e.g.:
+# NVIDIA-hosted nemotron-3-embed-1b by default (OpenAI-compatible /v1/embeddings
+# at integrate.api.nvidia.com). Point these at a self-hosted vLLM instead, e.g.:
 #   vllm serve Qwen/Qwen3-Embedding-0.6B --port 8002 --task embed
 VLLM_EMBEDDING_BASE_URL = os.getenv("VLLM_EMBEDDING_BASE_URL", "")
-VLLM_EMBEDDING_MODEL = os.getenv("VLLM_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B")
+VLLM_EMBEDDING_MODEL = os.getenv("VLLM_EMBEDDING_MODEL", "nvidia/nemotron-3-embed-1b")
 VLLM_EMBEDDING_API_KEY = os.getenv("VLLM_EMBEDDING_API_KEY", "")
-EMBEDDING_DIM = 1024
+EMBEDDING_DIM = 2048
 
 
-def embed(text: str) -> List[float]:
-    """Return an EMBEDDING_DIM-dim embedding vector for *text*."""
+def embed(text: str, input_type: str = "passage") -> List[float]:
+    """Return an EMBEDDING_DIM-dim embedding vector for *text*.
+
+    input_type distinguishes indexed content ("passage", the default — used
+    when storing episodes/insights) from search queries ("query" — used when
+    ranking against that index in get_context). nemotron-3-embed-1b requires
+    this to avoid accuracy loss; other OpenAI-compatible servers ignore it.
+    """
     if not VLLM_EMBEDDING_BASE_URL:
-        # Stub: deterministic zero vector for offline tests / no vLLM server yet.
+        # Stub: deterministic zero vector for offline tests / no endpoint yet.
         return [0.0] * EMBEDDING_DIM
 
     try:
@@ -34,7 +43,7 @@ def embed(text: str) -> List[float]:
         r = httpx.post(
             f"{VLLM_EMBEDDING_BASE_URL.rstrip('/')}/embeddings",
             headers=headers,
-            json={"model": VLLM_EMBEDDING_MODEL, "input": text},
+            json={"model": VLLM_EMBEDDING_MODEL, "input": text, "input_type": input_type},
             timeout=20,
         )
         r.raise_for_status()
