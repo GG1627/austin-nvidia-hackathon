@@ -188,6 +188,12 @@ class MockMemoryAgent:
         # "deferred" is recorded in history but does not move confidence.
         self.save()
 
+    def update_profile(self, attrs: Dict[str, str]) -> None:
+        """Onboarding hook: merge non-empty creator attributes into the profile."""
+        profile = self.graph.setdefault("creator_profile", {})
+        profile.update({k: v for k, v in attrs.items() if v})
+        self.save()
+
     # -- helpers used by Agent 2 (dedup) and Agent 3 (metrics) --------------
 
     def increment_run_count(self) -> int:

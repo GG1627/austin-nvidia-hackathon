@@ -180,6 +180,28 @@ class SupabaseMemoryBridge:
             ],
         )
 
+    def update_profile(self, attrs: Dict[str, str]) -> None:
+        """Onboarding hook: merge creator attributes into the creator node."""
+        from agents.db import get_client
+
+        attrs = {k: v for k, v in attrs.items() if v}
+        name = attrs.pop("name", None)
+        db = get_client()
+        rows = db.select("nodes", filters={"type": "eq.creator"}, limit=1)
+        if rows:
+            node = rows[0]
+            merged = {**(node.get("attrs") or {}), **attrs}
+            update = {"attrs": merged}
+            if name:
+                update["name"] = name
+            db.update("nodes", {"id": node["id"]}, update)
+        else:
+            db.upsert(
+                "nodes",
+                {"type": "creator", "name": name or "Creator", "attrs": attrs},
+                on_conflict="type,name",
+            )
+
     # -- run lifecycle ------------------------------------------------------
 
     def increment_run_count(self) -> int:

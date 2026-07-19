@@ -82,6 +82,46 @@ class TestDashboardApi(unittest.TestCase):
         memory = serve_dashboard.strategist().memory
         self.assertEqual(len(memory.graph["acceptance_history"]), 1)
 
+    def test_deferred_vote_recorded_and_can_be_upgraded(self):
+        result = self._quiet(serve_dashboard.run_cycle)
+        rec_id = result["recommendations"][0]["id"]
+        self._quiet(serve_dashboard.submit_feedback,
+                    {"recommendation_id": rec_id, "action": "deferred", "notes": "maybe later"})
+        payload = self._quiet(serve_dashboard.dashboard_payload)
+        self.assertTrue(payload["move"]["feedbackGiven"])  # deferred settles the card
+        self.assertEqual(payload["plan"]["later"][0]["run"], 1)
+        # A deferred vote is not final: it can still become a decision.
+        self._quiet(serve_dashboard.submit_feedback,
+                    {"recommendation_id": rec_id, "action": "accepted"})
+        run = self._history_last_run()
+        entries = [f for f in run["feedback"] if f["recommendation_id"] == rec_id]
+        self.assertEqual(len(entries), 1)  # updated in place, not duplicated
+        self.assertEqual(entries[0]["action"], "accepted")
+
+    def test_payload_exposes_patterns_plan_and_opportunities(self):
+        result = self._quiet(serve_dashboard.run_cycle)
+        rec = result["recommendations"][0]
+        self._quiet(serve_dashboard.submit_feedback,
+                    {"recommendation_id": rec["id"], "action": "accepted"})
+        payload = self._quiet(serve_dashboard.dashboard_payload)
+        self.assertTrue(payload["patterns"])  # accepted vote created a pattern
+        self.assertEqual(payload["plan"]["committed"][0]["title"], rec["title"])
+        self.assertEqual(payload["acceptanceRate"], 1.0)
+        self.assertIsInstance(payload["opportunities"], list)
+        self.assertTrue(any("creator accepted" in line for line in payload["activity"]))
+
+    def test_profile_endpoint_persists_creator(self):
+        out = self._quiet(serve_dashboard.submit_profile,
+                          {"name": "Maya Chen", "niche": "AI tools", "audience": "devs"})
+        self.assertTrue(out["ok"])
+        payload = self._quiet(serve_dashboard.dashboard_payload)
+        self.assertEqual(payload["creator"]["name"], "Maya Chen")
+        self.assertEqual(payload["creator"]["niche"], "AI tools")
+        with self.assertRaises(ValueError):
+            serve_dashboard.submit_profile({"name": ""})
+        with self.assertRaises(ValueError):
+            serve_dashboard.submit_profile({"name": "x" * 201})
+
     def test_unknown_or_invalid_feedback_rejected(self):
         with self.assertRaises(ValueError):
             serve_dashboard.submit_feedback({"recommendation_id": "rec_nope", "action": "accepted"})

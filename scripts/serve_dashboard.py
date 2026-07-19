@@ -7,6 +7,8 @@ Standard library only (no new installs). Serves the same wiring as main.py
     POST /api/cycle       run one Agent 3 cycle (no feedback collected; the UI
                           submits real feedback afterwards via /api/feedback)
     POST /api/feedback    {"recommendation_id", "action", "notes"} -> Agent 1
+    POST /api/profile     {"name", "niche", "audience"} -> creator profile
+                          (onboarding flow persistence)
 
 Run:  python3 scripts/serve_dashboard.py   (default port 8787)
 The Vite dev server proxies /api to this process (frontend/vite.config.ts).
@@ -79,6 +81,72 @@ def _ago(iso: str) -> str:
     return f"{seconds // 3600} hr ago"
 
 
+def _opportunity_view(item: dict, handoff: dict) -> dict:
+    return {
+        "id": item.get("id", ""),
+        "topic": item.get("topic", ""),
+        "angle": item.get("suggested_angle", ""),
+        "score": round(item.get("composite_score", 0)),
+        "freshness": _ago(handoff.get("generated_at", "")) if handoff else "",
+        "sources": sorted({src.get("name", "") for src in item.get("sources", [])}),
+        "signal": item.get("reasoning", item.get("reason", "")),
+    }
+
+
+def _plan_view(history: list) -> dict:
+    """Content plan derived from real votes: accepted recs are committed,
+    deferred ones are 'maybe later'."""
+    committed, later = [], []
+    for run in reversed(history):
+        recs = {r.get("id"): r for r in run.get("recommendations", [])}
+        for fb in run.get("feedback", []):
+            rec = recs.get(fb.get("recommendation_id"))
+            if not rec:
+                continue
+            if fb.get("action") == "accepted":
+                committed.append({
+                    "title": rec.get("title", ""),
+                    "why": rec.get("why", ""),
+                    "steps": rec.get("action_steps", []),
+                    "confidence": rec.get("confidence", 0),
+                    "run": run.get("run_number"),
+                    "notes": fb.get("notes", ""),
+                })
+            elif fb.get("action") == "deferred":
+                later.append({"title": rec.get("title", ""), "run": run.get("run_number")})
+    return {"committed": committed, "later": later}
+
+
+def _activity_view(handoff: dict, history: list) -> list:
+    activity = []
+    if handoff.get("generated_at"):
+        activity.append(f"Agent 2 heartbeat completed {_ago(handoff['generated_at'])}")
+    top = (handoff.get("opportunities") or [{}])[0]
+    if top:
+        activity.append(f"Top opportunity scored {round(top.get('composite_score', 0))} / 100")
+    for run in reversed(history[-5:]):
+        recs = {r.get("id"): r for r in run.get("recommendations", [])}
+        for fb in run.get("feedback", []):
+            rec = recs.get(fb.get("recommendation_id"), {})
+            verb = {"accepted": "accepted", "rejected": "rejected", "deferred": "deferred"}.get(fb.get("action"), "reviewed")
+            activity.append(f"Run {run.get('run_number')}: creator {verb} “{rec.get('title', '?')}”")
+        activity.append(
+            f"Run {run.get('run_number')}: {len(recs)} recommendation(s) via "
+            f"{run.get('metrics', {}).get('engine', 'fallback')}"
+        )
+    return activity[:12]
+
+
+def _overall_acceptance(history: list):
+    decided, accepted = 0, 0
+    for run in history:
+        for fb in run.get("feedback", []):
+            if fb.get("action") in ("accepted", "rejected"):
+                decided += 1
+                accepted += fb.get("action") == "accepted"
+    return round(accepted / decided, 2) if decided else None
+
+
 def dashboard_payload() -> dict:
     s = strategist()
     context = s.memory.get_creator_context()
@@ -99,23 +167,15 @@ def dashboard_payload() -> dict:
 
     recommendations = last_run.get("recommendations", [])
     move = recommendations[0] if recommendations else {}
-    fed_back = {f.get("recommendation_id") for f in last_run.get("feedback", [])
-                if f.get("action") in ("accepted", "rejected")}
+    # Any recorded vote (deferred included) settles the card for that rec.
+    fed_back = {f.get("recommendation_id") for f in last_run.get("feedback", [])}
 
-    activity = []
-    if handoff.get("generated_at"):
-        activity.append(f"Agent 2 heartbeat completed {_ago(handoff['generated_at'])}")
-    if top:
-        activity.append(f"Top opportunity scored {round(top.get('composite_score', 0))} / 100")
-    if last_run:
-        activity.append(
-            f"Agent 3 run {last_run.get('run_number')} produced "
-            f"{len(recommendations)} recommendation(s) via {last_run.get('metrics', {}).get('engine', 'fallback')}"
-        )
     patterns = context.learned_patterns
+    profile = getattr(s.memory, "graph", {}).get("creator_profile", {}) if hasattr(s.memory, "graph") else {}
     return {
         "creator": {
-            "name": (handoff.get("context_basis", {}).get("creator_profile", {}).get("name")
+            "name": (profile.get("name")
+                     or handoff.get("context_basis", {}).get("creator_profile", {}).get("name")
                      or "Creator"),
             "niche": context.creator_profile.niche,
             "audience": context.creator_profile.audience,
@@ -127,18 +187,18 @@ def dashboard_payload() -> dict:
                         if handoff else "run scripts/run_agent2_heartbeat.py"),
             "stale": stale,
         },
-        "opportunity": {
-            "id": top.get("id", ""),
-            "topic": top.get("topic", ""),
-            "angle": top.get("suggested_angle", ""),
-            "score": round(top.get("composite_score", 0)),
-            "freshness": _ago(handoff.get("generated_at", "")) if handoff else "",
-            "sources": sorted({src.get("name", "") for src in top.get("sources", [])}),
-            "signal": top.get("reasoning", top.get("reason", "")),
-        } if top else None,
+        "opportunity": _opportunity_view(top, handoff) if top else None,
+        "opportunities": [_opportunity_view(o, handoff) for o in opportunities],
         "insights": [p.pattern for p in sorted(patterns, key=lambda p: -p.confidence)[:3]],
+        "patterns": [
+            {"id": p.id, "text": p.pattern, "confidence": p.confidence,
+             "evidence": p.evidence_count}
+            for p in sorted(patterns, key=lambda p: -p.confidence)
+        ],
+        "plan": _plan_view(history),
+        "acceptanceRate": _overall_acceptance(history),
         "brain": {
-            "memories": len(patterns) + len(last_run.get("feedback", [])),
+            "memories": len(patterns) + sum(len(r.get("feedback", [])) for r in history),
             "patterns": len(patterns),
         },
         "move": {
@@ -149,7 +209,7 @@ def dashboard_payload() -> dict:
             "confidence": move.get("confidence", 0),
             "feedbackGiven": move.get("id") in fed_back,
         } if move else None,
-        "activity": activity,
+        "activity": _activity_view(handoff, history),
         "engine": last_run.get("metrics", {}).get("engine", "none"),
         "runCount": len(history),
     }
@@ -214,6 +274,23 @@ def submit_feedback(body: dict) -> dict:
     return {"ok": True, "recommendation_id": rec_id, "action": action}
 
 
+def submit_profile(body: dict) -> dict:
+    attrs = {}
+    for key in ("name", "niche", "audience"):
+        value = body.get(key, "")
+        if not isinstance(value, str) or len(value) > 200:
+            raise ValueError(f"{key} must be a string of at most 200 characters")
+        attrs[key] = value.strip()
+    if not any(attrs.values()):
+        raise ValueError("provide at least one of name, niche, audience")
+    s = strategist()
+    if not hasattr(s.memory, "update_profile"):
+        raise ValueError("this memory layer does not support profile updates")
+    with _lock:
+        s.memory.update_profile(attrs)
+    return {"ok": True, "profile": {k: v for k, v in attrs.items() if v}}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code: int, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -246,6 +323,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, run_cycle())
             elif self.path == "/api/feedback":
                 self._send(200, submit_feedback(body))
+            elif self.path == "/api/profile":
+                self._send(200, submit_profile(body))
             else:
                 self._send(404, {"error": "not found"})
         except FeedbackConflict as exc:
