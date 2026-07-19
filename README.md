@@ -12,7 +12,7 @@ python3 main.py                       # one interactive cycle
 python3 main.py --cycles 4 --simulate # scripted 4-run demo showing learning
 python3 main.py --metrics             # run-over-run improvement dashboard
 python3 main.py --reset               # wipe memory back to cold start
-python3 -m unittest -v                # test suite (40 tests, all offline)
+python3 -m unittest -v                # test suite (44 tests, all offline)
 ```
 
 Add `NVIDIA_API_KEY` to `.env` (see `.env.example`) to generate
