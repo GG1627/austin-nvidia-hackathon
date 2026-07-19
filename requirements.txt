@@ -1,0 +1,16 @@
+# Agent 3 (strategist, orchestration, CLI) runs on the Python 3.11+ standard
+# library only — `python3 main.py` and `python3 -m unittest` need NO installs.
+# NVIDIA NIM is called via urllib; .env is parsed by tools/nim_client.load_env.
+
+# Optional quality-of-life (used automatically if present, never required):
+# python-dotenv>=1.0
+
+# --- Agent 2 (research connectors) — uncomment as those land ---
+# praw>=7.7            # Reddit
+# pytrends>=4.9        # Google Trends
+# tavily-python>=0.3   # Tavily web search fallback
+# feedparser>=6.0      # NVIDIA newsroom RSS
+# requests>=2.31
+
+# --- Optional UI upgrade for the demo ---
+# streamlit>=1.35
