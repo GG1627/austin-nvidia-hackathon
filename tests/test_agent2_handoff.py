@@ -51,7 +51,7 @@ def test_handoff_is_versioned_and_preserves_agent3_fields():
         assert saved["run_id"] == 42
         assert saved["context_basis"]["core_insight_ids"] == [3]
         assert saved["opportunities"][0]["id"] == "opp_test"
-        assert (root / "history" / "42.json").exists()
+        assert list((root / "history").glob("*-42.json"))
 
 
 def test_heartbeat_logs_agent2_findings_via_injected_agent1_interface():

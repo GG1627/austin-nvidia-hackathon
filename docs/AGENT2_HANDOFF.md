@@ -3,7 +3,7 @@
 Agent 2 produces a portable snapshot for Agent 3 at:
 
 - `memory/agent2/latest.json`
-- `memory/agent2/history/<run_id>.json`
+- `memory/agent2/history/<timestamp>-<run_id>.json` (newest 100 kept)
 
 The snapshot is a cache and handoff artifact, not a second learning database.
 Agent 1 remains the authoritative owner of runs, episodes, feedback, and

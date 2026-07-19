@@ -10,12 +10,14 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import shutil
 from typing import Any, Iterable
 
 from agents.agent2_research import Opportunity
 
 HANDOFF_SCHEMA_VERSION = "agent2-handoff/v1"
+HISTORY_RETENTION = 100  # newest snapshots kept in history/
 
 
 def build_handoff(
@@ -40,13 +42,19 @@ def build_handoff(
 
 
 def write_latest_handoff(payload: dict[str, Any], directory: str | Path = "memory/agent2") -> Path:
-    """Atomically replace latest.json and retain an immutable per-run snapshot."""
+    """Atomically replace latest.json and retain an immutable per-beat snapshot.
+
+    Snapshot names are timestamp-prefixed so repeated run_ids (standalone mode
+    reuses "local" every beat) never overwrite earlier snapshots; only the
+    newest HISTORY_RETENTION files are kept."""
     root = Path(directory)
     history = root / "history"
     history.mkdir(parents=True, exist_ok=True)
 
-    run_id = str(payload["run_id"])
-    _atomic_json_write(history / f"{run_id}.json", payload)
+    stamp = re.sub(r"[^0-9T]", "", str(payload.get("generated_at", ""))[:19]) or "unknown"
+    _atomic_json_write(history / f"{stamp}-{payload['run_id']}.json", payload)
+    for stale in sorted(history.glob("*.json"))[:-HISTORY_RETENTION]:
+        stale.unlink(missing_ok=True)
     latest = root / "latest.json"
     _atomic_json_write(latest, payload)
     return latest

@@ -7,11 +7,30 @@ from xml.etree import ElementTree
 GITHUB_TRENDING_URL = "https://github.com/trending?since=weekly"
 NVIDIA_RSS_URL = "https://nvidianews.nvidia.com/releases.xml"
 
+# Two-segment paths on the trending page that are not repositories.
+_GITHUB_NON_REPO_PREFIXES = frozenset({
+    "apps", "collections", "customer-stories", "events", "features", "orgs",
+    "readme", "resources", "security", "site", "solutions", "sponsors",
+    "topics", "trending",
+})
+
+
+def _trending_repos(html):
+    """Repo slugs from the trending page. Repo entries live in <h2> headings;
+    the bare-href fallback (filtered against known non-repo paths) keeps the
+    connector alive if GitHub changes that markup."""
+    repos = re.findall(r'<h2[^>]*>\s*<a[^>]*href="/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)"', html)
+    if repos:
+        return repos
+    return [repo for repo in re.findall(r'href="/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)"', html)
+            if repo.split("/", 1)[0] not in _GITHUB_NON_REPO_PREFIXES]
+
+
 def fetch_github_trending(client, max_per_source):
     from agents.agent2_research import RawSignal
     response = client.get(GITHUB_TRENDING_URL, headers={"User-Agent": "creator-intelligence/0.1"}); response.raise_for_status()
     seen, signals = set(), []
-    for repo in re.findall(r'href="/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)"', response.text):
+    for repo in _trending_repos(response.text):
         if repo in seen:
             continue
         seen.add(repo)

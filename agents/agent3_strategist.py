@@ -25,16 +25,15 @@ import inspect
 import json
 import os
 import re
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence
 
+from agents import agent3_fallback, agent3_presenter
 from agents.contracts import (
     FEEDBACK_ACTIONS,
     CreatorContext,
     CycleResult,
     Feedback,
-    LearnedPattern,
     Opportunity,
-    PendingIdea,
     Recommendation,
 )
 
@@ -44,18 +43,6 @@ DEFAULT_HISTORY_PATH = os.path.join("memory", "cycle_history.json")
 # FeedbackProvider: (recommendation) -> Feedback. Used for simulation/tests;
 # when None, feedback is collected interactively on the CLI.
 FeedbackProvider = Callable[[Recommendation], Feedback]
-
-_STOPWORDS = {
-    "a", "an", "and", "for", "in", "is", "of", "on", "or", "the", "this",
-    "to", "with", "vs", "your", "you", "i", "we", "so",
-}
-
-
-def _keywords(text: str) -> set:
-    return {
-        w for w in re.findall(r"[a-z0-9]+", text.lower())
-        if len(w) > 2 and w not in _STOPWORDS
-    }
 
 
 class StrategistAgent:
@@ -320,144 +307,14 @@ class StrategistAgent:
             return False
         return True
 
-    # -- Deterministic fallback path ------------------------------------
+    # -- Deterministic fallback path (agents/agent3_fallback.py) --------
 
     def _fallback_recommendations(
         self, context: CreatorContext, opportunities: List[Opportunity]
     ) -> List[Recommendation]:
-        recs: List[Recommendation] = []
-        for i, opp in enumerate(opportunities[: self.max_recommendations], 1):
-            pattern = self._best_pattern(context.learned_patterns, opp)
-            idea = self._matching_idea(context.pending_ideas, opp)
-            confidence = self._confidence(opp, pattern)
-            recs.append(
-                Recommendation(
-                    id=f"rec_{i:03d}",
-                    rank=i,
-                    title=opp.suggested_angle or opp.topic,
-                    why=self._build_why(opp, pattern, idea),
-                    supporting_patterns=[pattern.id] if pattern else [],
-                    opportunity_id=opp.id,
-                    confidence=confidence,
-                    action_steps=self._build_action_steps(context, opp, idea),
-                )
-            )
-        recs.sort(key=lambda r: r.confidence, reverse=True)
-        for i, rec in enumerate(recs, start=1):
-            rec.rank = i
-        return recs
-
-    @staticmethod
-    def _best_pattern(
-        patterns: List[LearnedPattern], opp: Opportunity
-    ) -> Optional[LearnedPattern]:
-        if not patterns:
-            return None
-        opp_words = _keywords(f"{opp.topic} {opp.suggested_angle}")
-        scored: List[Tuple[float, LearnedPattern]] = []
-        for p in patterns:
-            if p.id.startswith("p_avoid"):
-                continue
-            overlap = len(opp_words & _keywords(p.pattern))
-            scored.append((overlap + p.confidence, p))
-        if not scored:
-            return None
-        scored.sort(key=lambda t: t[0], reverse=True)
-        return scored[0][1]
-
-    @staticmethod
-    def _matching_idea(
-        ideas: List[PendingIdea], opp: Opportunity
-    ) -> Optional[PendingIdea]:
-        opp_words = _keywords(f"{opp.topic} {opp.suggested_angle}")
-        for idea in ideas:
-            # A single shared word (e.g. "nvidia") is too weak to claim the
-            # idea's research applies to this opportunity.
-            if len(_keywords(idea.title) & opp_words) >= 2:
-                return idea
-        return None
-
-    @staticmethod
-    def _confidence(
-        opp: Opportunity, pattern: Optional[LearnedPattern]
-    ) -> float:
-        # Cold start (no patterns) lands near 0.4; strong patterns push
-        # toward 0.9 — matching the trajectory in docs/RECURSIVE_LOOP.md.
-        base = 0.2 + 0.25 * (opp.composite_score / 100.0)
-        if pattern:
-            base += 0.5 * pattern.confidence
-        return round(min(0.95, max(0.05, base)), 2)
-
-    @staticmethod
-    def _build_why(
-        opp: Opportunity,
-        pattern: Optional[LearnedPattern],
-        idea: Optional[PendingIdea],
-    ) -> str:
-        parts = [
-            f"{opp.reason}.",
-            f"Trend score {opp.trend_score:.0f}/100, "
-            f"niche alignment {opp.niche_alignment:.0f}/100, "
-            f"competition gap {opp.competition_gap:.0f}/100 "
-            f"(composite {opp.composite_score:.0f}).",
-        ]
-        if opp.sources:
-            src = ", ".join(
-                f"{s.name} ({s.detail})" if s.detail else s.name
-                for s in opp.sources
-            )
-            parts.append(f"Evidence: {src}.")
-        if pattern:
-            parts.append(
-                f"Matches learned pattern {pattern.id}: \"{pattern.pattern}\" "
-                f"(confidence {pattern.confidence:.2f}, "
-                f"{pattern.evidence_count} supporting items)."
-            )
-        else:
-            parts.append(
-                "No learned patterns yet — reasoning from live signals only, "
-                "so confidence is conservative."
-            )
-        if idea:
-            parts.append(
-                f"You already have {idea.research_complete * 100:.0f}% of the "
-                f"research done in pending idea \"{idea.title}\"."
-            )
-        return " ".join(parts)
-
-    @staticmethod
-    def _build_action_steps(
-        context: CreatorContext,
-        opp: Opportunity,
-        idea: Optional[PendingIdea],
-    ) -> List[str]:
-        steps = []
-        if idea:
-            steps.append(
-                f"Review your existing notes for \"{idea.title}\" "
-                f"({idea.research_complete * 100:.0f}% research complete)"
-            )
-        elif opp.sources:
-            steps.append(
-                f"Collect source material starting from {opp.sources[0].name}"
-            )
-        else:
-            steps.append(f"Research the topic \"{opp.topic}\" and collect sources")
-        steps.append(
-            f"Outline the video around the angle: \"{opp.suggested_angle or opp.topic}\""
+        return agent3_fallback.fallback_recommendations(
+            context, opportunities, self.max_recommendations
         )
-        length = context.creator_profile.preferred_length
-        if length:
-            steps.append(
-                f"Target a {length} runtime to match your audience retention data"
-            )
-        else:
-            steps.append("Keep the runtime tight; front-load the strongest section")
-        steps.append(
-            "After publishing, log views/retention back into the system so the "
-            "next cycle learns from the outcome"
-        )
-        return steps
 
     # ------------------------------------------------------------------
     # Creator interface (Milestone 3.3)
@@ -468,29 +325,9 @@ class StrategistAgent:
         recommendations: List[Recommendation],
         opportunities: Optional[List[Opportunity]] = None,
     ) -> None:
-        if not recommendations:
-            self._print("\n  No recommendations this cycle (no eligible opportunities).")
-            return
-        opps = {o.id: o for o in (opportunities or [])}
-        self._print("\n  ── TOP RECOMMENDATIONS " + "─" * 38)
-        for rec in recommendations:
-            bar = "█" * round(rec.confidence * 10) + "░" * (10 - round(rec.confidence * 10))
-            self._print(f"\n  #{rec.rank}  {rec.title}")
-            self._print(f"      confidence {rec.confidence:.2f} [{bar}]")
-            self._print(f"      WHY: {rec.why}")
-            if rec.supporting_patterns:
-                self._print(
-                    f"      PATTERNS CITED: {', '.join(rec.supporting_patterns)}"
-                )
-            opp = opps.get(rec.opportunity_id)
-            if opp and opp.sources:
-                for s in opp.sources:
-                    detail = f" — {s.detail}" if s.detail else ""
-                    self._print(f"      SOURCE: {s.name}{detail} ({s.url})")
-            self._print("      ACTION STEPS:")
-            for j, step in enumerate(rec.action_steps, 1):
-                self._print(f"        {j}. {step}")
-        self._print("\n  " + "─" * 60)
+        agent3_presenter.present_recommendations(
+            recommendations, opportunities, self._print
+        )
 
     def collect_feedback(
         self,
@@ -509,47 +346,11 @@ class StrategistAgent:
         return feedback
 
     def _interactive_feedback(self, rec: Recommendation) -> Feedback:
-        self._print(f"\n  Feedback for #{rec.rank} \"{rec.title}\"")
-        while True:
-            raw = self._input(
-                "    [a]ccept / [r]eject / [d]efer (default d): "
-            ).strip().lower()
-            action = {
-                "a": "accepted", "accept": "accepted", "accepted": "accepted",
-                "r": "rejected", "reject": "rejected", "rejected": "rejected",
-                "d": "deferred", "defer": "deferred", "deferred": "deferred",
-                "": "deferred",
-            }.get(raw)
-            if action:
-                break
-            self._print("    Please enter a, r, or d.")
-        notes = self._input("    Notes (optional): ").strip()
-        return Feedback(recommendation_id=rec.id, action=action, notes=notes)
+        return agent3_presenter.interactive_feedback(rec, self._input, self._print)
 
     def _show_learning_summary(self, patterns_before: Dict[str, float]) -> None:
-        """'What I learned' summary shown after each cycle."""
-        context = self.memory.get_creator_context()
-        after = {p.id: p for p in context.learned_patterns}
-        new = [p for pid, p in after.items() if pid not in patterns_before]
-        changed = [
-            (p, patterns_before[pid])
-            for pid, p in after.items()
-            if pid in patterns_before and abs(p.confidence - patterns_before[pid]) > 1e-9
-        ]
-        self._print("\n  ── WHAT I LEARNED THIS CYCLE " + "─" * 32)
-        if not new and not changed:
-            self._print("    Nothing new — no feedback moved any conclusions.")
-        for p in new:
-            self._print(
-                f"    NEW  {p.id}: \"{p.pattern}\" (confidence {p.confidence:.2f})"
-            )
-        for p, old in changed:
-            arrow = "↑" if p.confidence > old else "↓"
-            self._print(
-                f"    {arrow}    {p.id}: confidence {old:.2f} → {p.confidence:.2f} "
-                f"({p.evidence_count} evidence items)"
-            )
-        self._print("  " + "─" * 60)
+        after = {p.id: p for p in self.memory.get_creator_context().learned_patterns}
+        agent3_presenter.show_learning_summary(patterns_before, after, self._print)
 
     # ------------------------------------------------------------------
     # Improvement metrics dashboard (Milestone 3.4)
@@ -604,48 +405,4 @@ class StrategistAgent:
         os.replace(tmp_path, self.history_path)
 
     def show_improvement_metrics(self) -> None:
-        """Run-over-run dashboard proving the system is getting smarter."""
-        history = self._load_history()
-        self._print("\n  ── IMPROVEMENT METRICS " + "─" * 38)
-        if not history:
-            self._print("    No cycles logged yet. Run a cycle first.")
-            self._print("  " + "─" * 60)
-            return
-
-        headers = ["metric"] + [f"Run {r.run_number}" for r in history]
-        rows = [
-            ("Learned patterns", [r.metrics.get("learned_patterns", 0) for r in history]),
-            ("Avg confidence", [f"{r.metrics.get('avg_confidence', 0):.2f}" for r in history]),
-            (
-                "Acceptance rate",
-                [
-                    "—" if r.metrics.get("acceptance_rate") is None
-                    else f"{r.metrics['acceptance_rate']:.0%}"
-                    for r in history
-                ],
-            ),
-            ("Duplicates filtered", [r.metrics.get("duplicates_filtered", 0) for r in history]),
-            ("Action steps / rec", [r.metrics.get("avg_action_steps", 0) for r in history]),
-        ]
-        widths = [max(len(headers[0]), max(len(name) for name, _ in rows))] + [
-            max(8, len(h)) for h in headers[1:]
-        ]
-        line = "    " + "  ".join(h.ljust(w) for h, w in zip(headers, widths))
-        self._print(line)
-        self._print("    " + "  ".join("-" * w for w in widths))
-        for name, values in rows:
-            cells = [name.ljust(widths[0])] + [
-                str(v).ljust(w) for v, w in zip(values, widths[1:])
-            ]
-            self._print("    " + "  ".join(cells))
-
-        first, last = history[0], history[-1]
-        if len(history) > 1:
-            d_patterns = last.metrics.get("learned_patterns", 0) - first.metrics.get("learned_patterns", 0)
-            d_conf = last.metrics.get("avg_confidence", 0) - first.metrics.get("avg_confidence", 0)
-            self._print(
-                f"\n    Run {first.run_number} → Run {last.run_number}: "
-                f"{d_patterns:+d} patterns, "
-                f"{d_conf:+.2f} avg confidence"
-            )
-        self._print("  " + "─" * 60)
+        agent3_presenter.render_improvement_metrics(self._load_history(), self._print)

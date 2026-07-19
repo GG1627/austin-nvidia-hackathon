@@ -44,6 +44,15 @@ def test_source_failure_does_not_stop_run(monkeypatch):
     assert results and "reddit" in agent.last_result.source_errors
 
 
+def test_github_trending_filters_non_repo_links():
+    from tools.world_sources import _trending_repos
+
+    anchored = '<h2 class="h3"><a href="/owner/repo">x</a></h2><a href="/sponsors/owner">s</a>'
+    assert _trending_repos(anchored) == ["owner/repo"]
+    bare = '<a href="/sponsors/owner">s</a><a href="/features/copilot">f</a><a href="/owner/repo">r</a>'
+    assert _trending_repos(bare) == ["owner/repo"]
+
+
 def test_avoided_topic_is_filtered(monkeypatch):
     agent = ResearchAgent()
     monkeypatch.setattr(agent, "_analyse_group", lambda group, ctx: {"topic": "Crypto agents", "suggested_angle": "x", "reasoning": "x", "niche_alignment": 90, "competition_gap": 80})

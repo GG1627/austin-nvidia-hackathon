@@ -224,8 +224,7 @@ class ResearchAgent:
             return data
         except Exception:
             # A usable deterministic fallback keeps the live-monitor promise when Ollama is offline.
-            first = group[0]
-            return {"topic": first.topic or first.title, "suggested_angle": f"Practical developer guide to {first.topic or first.title}", "reasoning": f"Grounded in {len(group)} live signal(s), led by {first.source}.", "niche_alignment": _keyword_alignment(first.title, profile), "competition_gap": 50}
+            return self._fallback_analysis(group, profile)
 
     @staticmethod
     def _fallback_analysis(group: list[RawSignal], profile: dict[str, Any]) -> dict[str, Any]:
