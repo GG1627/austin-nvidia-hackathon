@@ -21,13 +21,14 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from agents.agent3_strategist import StrategistAgent
+from agents.bridges import build_memory_agent, build_research_agent
 from agents.contracts import Feedback, Recommendation
-from agents.stubs import MockMemoryAgent, MockResearchAgent
 from tools.nim_client import NIMClient, load_env
 
 MEMORY_FILES = (
     os.path.join("memory", "knowledge_graph.json"),
     os.path.join("memory", "cycle_history.json"),
+    os.path.join("memory", "agent2", "surfaced.json"),
 )
 
 
@@ -44,19 +45,17 @@ def simulated_feedback(rec: Recommendation) -> Feedback:
     return Feedback(rec.id, "deferred", "Maybe later")
 
 
-def build_strategist(offline: bool = False) -> StrategistAgent:
+def build_strategist(offline: bool = False, mock: bool = False) -> StrategistAgent:
     """Wire up the system.
 
-    INTEGRATION POINT: when Agent 1 / Agent 2 are ready, replace the stub
-    constructors below with the real ones (see docs/AGENT3_INTEGRATION.md):
-
-        from agents.agent1_memory import CreatorMemoryAgent
-        from agents.agent2_research import ResearchAgent
-        memory = CreatorMemoryAgent(...)
-        research = ResearchAgent(...)
+    Real integrations are auto-detected (see agents/bridges.py): Agent 1 via
+    SUPABASE_URL/SUPABASE_SERVICE_KEY, Agent 2 via memory/agent2/latest.json
+    written by scripts/run_agent2_heartbeat.py. --mock forces the stubs.
     """
-    memory = MockMemoryAgent()
-    research = MockResearchAgent(memory)
+    memory, memory_label = build_memory_agent(force_mock=mock)
+    research, research_label = build_research_agent(memory, force_mock=mock)
+    print(f"  Agent 1: {memory_label}")
+    print(f"  Agent 2: {research_label}")
     llm = None if offline else NIMClient()
     if llm is not None and not llm.available:
         print("  (No NVIDIA_API_KEY found — using deterministic fallback engine)")
@@ -71,6 +70,8 @@ def main(argv=None) -> int:
                         help="use scripted creator feedback (no interactive input)")
     parser.add_argument("--offline", action="store_true",
                         help="skip NVIDIA NIM even if a key is configured")
+    parser.add_argument("--mock", action="store_true",
+                        help="force the stub agents even when real ones are available")
     parser.add_argument("--metrics", action="store_true",
                         help="show the improvement dashboard and exit")
     parser.add_argument("--reset", action="store_true",
@@ -87,7 +88,7 @@ def main(argv=None) -> int:
         print("  Memory reset — next run is a cold start.")
         return 0
 
-    strategist = build_strategist(offline=args.offline)
+    strategist = build_strategist(offline=args.offline, mock=args.mock)
 
     if args.metrics:
         strategist.show_improvement_metrics()

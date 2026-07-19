@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from threading import Event
 from typing import Any, Callable, Optional, Union
@@ -81,11 +82,23 @@ class Agent2Heartbeat:
             stopper.wait(self.interval_seconds)
 
     def _write_failure(self, error: str) -> None:
+        """Record the failure without destroying the last good snapshot:
+        opportunities (and their run_id) from the previous latest.json are
+        carried forward and marked stale so Agent 3 keeps working."""
         payload = {
             "schema_version": "agent2-handoff/v1",
+            "run_id": "failure",  # write_latest_handoff keys the history snapshot on this
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "producer": {"agent": "agent2_research", "model": self.research_agent.ollama_model},
             "source_errors": {"heartbeat": error},
             "opportunities": [],
         }
+        try:
+            previous = json.loads((self.handoff_directory / "latest.json").read_text(encoding="utf-8"))
+            if previous.get("opportunities"):
+                payload["opportunities"] = previous["opportunities"]
+                payload["run_id"] = previous.get("run_id")
+                payload["stale"] = {"last_good_generated_at": previous.get("generated_at")}
+        except (OSError, json.JSONDecodeError):
+            pass
         write_latest_handoff(payload, self.handoff_directory)

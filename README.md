@@ -23,8 +23,17 @@ everything fully functional.
 
 - **Agent 3 (strategist, orchestration, CLI, metrics): complete** — see
   [docs/AGENT3_INTEGRATION.md](docs/AGENT3_INTEGRATION.md)
-- Agent 1 & Agent 2: currently running as stand-ins (`agents/stubs.py`);
-  swap points documented in the integration guide.
+- **Real agents auto-wire when available** (`agents/bridges.py`):
+  - Agent 1: set `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` to use the real
+    memory layer (episodes + consolidation run after every cycle);
+    otherwise the JSON-file mock is used.
+  - Agent 2: `python3 scripts/run_agent2_heartbeat.py` writes
+    `memory/agent2/latest.json`; `main.py` consumes it automatically.
+  - `python3 main.py --mock` forces the stubs for a deterministic demo.
+- **Dashboard**: `python3 scripts/serve_dashboard.py` (stdlib, port 8787)
+  serves live agent state to the React app in `frontend/`
+  (`npm run dev` proxies `/api`); "Run cycle" and the feedback buttons hit
+  the real system.
 
 ## Docs
 

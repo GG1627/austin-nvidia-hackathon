@@ -134,6 +134,11 @@ class StrategistAgent:
         for fb in feedback:
             self._ingest_feedback(fb, recs_by_id.get(fb.recommendation_id))
 
+        # Memory layers with a consolidation engine (the real Agent 1) turn the
+        # cycle's episodes into insights now, so the next run starts smarter.
+        if hasattr(self.memory, "consolidate"):
+            self.memory.consolidate()
+
         self._show_learning_summary(patterns_before)
 
         metrics = self._cycle_metrics(
