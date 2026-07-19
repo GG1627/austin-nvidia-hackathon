@@ -92,7 +92,10 @@ def active_insights(db=None) -> list[dict]:
 
 
 def _find_similar(db, embedding: list, pool: list[dict], threshold: float = DEDUP_THRESHOLD) -> Optional[dict]:
-    """Find an existing insight whose embedding is within `threshold` cosine similarity."""
+    """Find an existing insight whose embedding is within `threshold` cosine
+    similarity. Always returns the pool's own row object (never a fresh copy)
+    so confidence updates accumulate on one shared dict per insight."""
+    by_id = {row["id"]: row for row in pool}
     if any(embedding):
         try:
             matches = db.rpc("match_insights", {
@@ -101,6 +104,8 @@ def _find_similar(db, embedding: list, pool: list[dict], threshold: float = DEDU
                 "match_count": 1,
             })
             if matches and matches[0].get("similarity", 0) >= threshold:
+                if matches[0]["id"] in by_id:
+                    return by_id[matches[0]["id"]]
                 full = db.select("insights", filters={"id": f"eq.{matches[0]['id']}"}, limit=1)
                 if full:
                     return full[0]
@@ -108,7 +113,9 @@ def _find_similar(db, embedding: list, pool: list[dict], threshold: float = DEDU
             print(f"[consolidation] match_insights RPC unavailable, using local cosine: {exc}")
 
     for row in pool:
-        emb = parse_embedding(row.get("embedding"))
+        emb = row.get("_parsed_embedding")
+        if emb is None:
+            emb = row["_parsed_embedding"] = parse_embedding(row.get("embedding"))
         if not emb or not any(emb):
             continue
         if cosine_similarity(embedding, emb) >= threshold:
@@ -215,13 +222,18 @@ def run_consolidation(run_id: Optional[int] = None, onboarding: bool = False) ->
                 result["promoted"] += 1
             elif new_status == "deprecated":
                 result["deprecated"] += 1
-        db.update("insights", {"id": row["id"]}, {
+        changes = {
             "confidence": round(new_conf, 6),
             "evidence_for": new_support,
             "status": new_status,
             "supporting_episode_ids": src_ids,
             "last_updated_run": run_id,
-        })
+        }
+        db.update("insights", {"id": row["id"]}, changes)
+        # Keep the in-memory row current: the same insight can receive several
+        # support/contradict updates in one pass, and each must build on the
+        # previous one instead of the values read at the start of the batch.
+        row.update(changes)
         result["insights_updated"] += 1
         return new_status
 
@@ -241,12 +253,14 @@ def run_consolidation(run_id: Optional[int] = None, onboarding: bool = False) ->
         new_status = "deprecated" if new_conf < DEPRECATED_CONF else row["status"]
         if new_status == "deprecated" and row["status"] != "deprecated":
             result["deprecated"] += 1
-        db.update("insights", {"id": row["id"]}, {
+        changes = {
             "confidence": round(new_conf, 6),
             "evidence_against": row["evidence_against"] + 1,
             "status": new_status,
             "last_updated_run": run_id,
-        })
+        }
+        db.update("insights", {"id": row["id"]}, changes)
+        row.update(changes)
         result["insights_updated"] += 1
 
     # 5. Insert genuinely new hypotheses at the fixed starting confidence.
@@ -270,9 +284,8 @@ def run_consolidation(run_id: Optional[int] = None, onboarding: bool = False) ->
         })
         result["insights_new"] += 1
 
-    # 6. Mark episodes consolidated.
-    for e in episodes:
-        db.update("episodes", {"id": e["id"]}, {"consolidated": True})
+    # 6. Mark episodes consolidated (one bulk PATCH, not one per row).
+    db.update_in("episodes", "id", [e["id"] for e in episodes], {"consolidated": True})
     result["episodes_processed"] = len(episodes)
 
     # 7. Snapshot the post-consolidation active insight list, update runs.metrics.

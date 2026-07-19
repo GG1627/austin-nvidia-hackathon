@@ -30,7 +30,8 @@ everything fully functional.
   - Agent 2: `python3 scripts/run_agent2_heartbeat.py` writes
     `memory/agent2/latest.json`; `main.py` consumes it automatically.
     Without Supabase it runs standalone (handoff only, no episode logging);
-    with Supabase configured it also needs `AGENT_RUN_ID` set.
+    with Supabase configured it reads the real creator context and logs
+    episodes (`AGENT_RUN_ID` optionally pins them to an Agent 3-owned run).
   - `python3 main.py --mock` forces the stubs for a deterministic demo.
 - **Dashboard**: `python3 scripts/serve_dashboard.py` (stdlib, port 8787)
   serves live agent state to the React app in `frontend/`

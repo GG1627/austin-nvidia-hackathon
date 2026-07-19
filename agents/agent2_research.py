@@ -108,14 +108,19 @@ class ResearchAgent:
         signals: list[RawSignal] = []
         errors: dict[str, str] = {}
         fetchers: list[tuple[str, Callable[[], list[RawSignal]]]] = [
-            ("reddit", self.fetch_reddit_signals),
             ("hacker_news", self.fetch_hn_signals),
             ("google_trends", self.fetch_trends),
             ("github", self.fetch_github_trending),
             ("nvidia_rss", self.fetch_nvidia_news),
-            ("tavily", self.fetch_tavily_signals),
-            ("youtube", self.fetch_youtube_signals),
         ]
+        # Sources needing credentials are skipped (not errored) until configured:
+        # Reddit's public JSON endpoint is IP-blocked without OAuth.
+        if os.getenv("REDDIT_CLIENT_ID") and os.getenv("REDDIT_CLIENT_SECRET"):
+            fetchers.insert(0, ("reddit", self.fetch_reddit_signals))
+        if self.tavily_api_key:
+            fetchers.append(("tavily", self.fetch_tavily_signals))
+        if self.youtube_api_key:
+            fetchers.append(("youtube", self.fetch_youtube_signals))
         if os.getenv("ENABLE_X", "false").lower() in {"1", "true", "yes"}:
             fetchers.append(("x", self.fetch_x_signals))
         for name, fetch in fetchers:
@@ -219,8 +224,7 @@ class ResearchAgent:
             return data
         except Exception:
             # A usable deterministic fallback keeps the live-monitor promise when Ollama is offline.
-            first = group[0]
-            return {"topic": first.topic or first.title, "suggested_angle": f"Practical developer guide to {first.topic or first.title}", "reasoning": f"Grounded in {len(group)} live signal(s), led by {first.source}.", "niche_alignment": _keyword_alignment(first.title, profile), "competition_gap": 50}
+            return self._fallback_analysis(group, profile)
 
     @staticmethod
     def _fallback_analysis(group: list[RawSignal], profile: dict[str, Any]) -> dict[str, Any]:

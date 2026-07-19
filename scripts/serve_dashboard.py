@@ -82,12 +82,17 @@ def _ago(iso: str) -> str:
 
 
 def _opportunity_view(item: dict, handoff: dict) -> dict:
+    # Prefer the opportunity's own freshness (newest source signal); the
+    # handoff's generated_at is only a fallback for signals without dates.
+    freshness = _ago(item.get("freshness") or "")
+    if freshness == "unknown" and handoff:
+        freshness = _ago(handoff.get("generated_at", ""))
     return {
         "id": item.get("id", ""),
         "topic": item.get("topic", ""),
         "angle": item.get("suggested_angle", ""),
         "score": round(item.get("composite_score", 0)),
-        "freshness": _ago(handoff.get("generated_at", "")) if handoff else "",
+        "freshness": freshness if freshness != "unknown" else "",
         "sources": sorted({src.get("name", "") for src in item.get("sources", [])}),
         "signal": item.get("reasoning", item.get("reason", "")),
     }

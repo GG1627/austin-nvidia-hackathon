@@ -3,7 +3,7 @@
 Agent 2 produces a portable snapshot for Agent 3 at:
 
 - `memory/agent2/latest.json`
-- `memory/agent2/history/<run_id>.json`
+- `memory/agent2/history/<timestamp>-<run_id>.json` (newest 100 kept)
 
 The snapshot is a cache and handoff artifact, not a second learning database.
 Agent 1 remains the authoritative owner of runs, episodes, feedback, and
@@ -53,8 +53,9 @@ Agent 3 integrate through a stable file contract.
 
 ## Heartbeat launcher
 
-After Harrison-Agent1 is merged and Agent 3 has created a run, start Agent 2:
+With Supabase configured, start Agent 2 (AGENT_RUN_ID is optional — set it to
+pin episodes to an Agent 3-owned run, otherwise they carry run_id=null):
 
 ```bash
-AGENT_RUN_ID=<agent1-run-id> python scripts/run_agent2_heartbeat.py
+python scripts/run_agent2_heartbeat.py
 ```

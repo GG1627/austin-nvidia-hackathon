@@ -23,15 +23,26 @@ from __future__ import annotations
 import os
 import json
 
-NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
-NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
-NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.1-nemotron-70b-instruct")
+# Env is read per call (see _primary_env/_calibrate_env), not at import time,
+# so this module works no matter when it is imported relative to load_env().
 
-# Self-hosted vLLM instance serving the calibration model, e.g.:
-#   vllm serve Qwen/Qwen2.5-7B-Instruct --port 8001
-VLLM_CALIBRATE_BASE_URL = os.getenv("VLLM_CALIBRATE_BASE_URL", "")
-VLLM_CALIBRATE_MODEL = os.getenv("VLLM_CALIBRATE_MODEL", "Qwen/Qwen2.5-7B-Instruct")
-VLLM_CALIBRATE_API_KEY = os.getenv("VLLM_CALIBRATE_API_KEY", "")
+
+def _primary_env() -> tuple[str, str, str]:
+    return (
+        os.getenv("NVIDIA_API_KEY", ""),
+        os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+        os.getenv("NVIDIA_MODEL", "nvidia/llama-3.1-nemotron-70b-instruct"),
+    )
+
+
+def _calibrate_env() -> tuple[str, str, str]:
+    # Self-hosted vLLM instance serving the calibration model, e.g.:
+    #   vllm serve Qwen/Qwen2.5-7B-Instruct --port 8001
+    return (
+        os.getenv("VLLM_CALIBRATE_API_KEY", ""),
+        os.getenv("VLLM_CALIBRATE_BASE_URL", ""),
+        os.getenv("VLLM_CALIBRATE_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
+    )
 
 
 def _chat(base_url: str, api_key: str, model: str, messages: list, max_tokens: int = 1024) -> str:
@@ -98,7 +109,8 @@ def propose_consolidation(episodes: list[dict], active_insights: list[dict]) -> 
     Returns {"new_hypotheses": [...], "evidence_updates": [...], "contradictions": [...]}.
     """
     empty = {"new_hypotheses": [], "evidence_updates": [], "contradictions": []}
-    if not NVIDIA_API_KEY:
+    api_key, base_url, model = _primary_env()
+    if not api_key:
         return empty
 
     messages = [
@@ -106,7 +118,7 @@ def propose_consolidation(episodes: list[dict], active_insights: list[dict]) -> 
         {"role": "user", "content": json.dumps({"episodes": episodes, "active_insights": active_insights})},
     ]
     try:
-        raw = _chat(NVIDIA_BASE_URL, NVIDIA_API_KEY, NVIDIA_MODEL, messages, max_tokens=2048)
+        raw = _chat(base_url, api_key, model, messages, max_tokens=2048)
         data = json.loads(_strip_fences(raw))
         for key in ("new_hypotheses", "evidence_updates", "contradictions"):
             data.setdefault(key, [])
@@ -132,7 +144,8 @@ def calibrate_batch(candidates: list[dict]) -> dict[int, bool]:
     missing/failed entries default to False, which keeps the slower single-model
     0.15 support factor.
     """
-    if not VLLM_CALIBRATE_BASE_URL or not candidates:
+    api_key, base_url, model = _calibrate_env()
+    if not base_url or not candidates:
         return {}
 
     payload = [
@@ -144,7 +157,7 @@ def calibrate_batch(candidates: list[dict]) -> dict[int, bool]:
         {"role": "user", "content": json.dumps(payload)},
     ]
     try:
-        raw = _chat(VLLM_CALIBRATE_BASE_URL, VLLM_CALIBRATE_API_KEY, VLLM_CALIBRATE_MODEL, messages, max_tokens=1024)
+        raw = _chat(base_url, api_key, model, messages, max_tokens=1024)
         data = json.loads(_strip_fences(raw))
         return {a["index"]: bool(a.get("agree", False)) for a in data.get("agreements", [])}
     except Exception as exc:  # noqa: BLE001

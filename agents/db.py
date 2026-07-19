@@ -8,14 +8,14 @@ import json
 import httpx
 from typing import Any, Optional
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")  # use service key for writes
-
-
 class SupabaseClient:
     """Minimal REST client for Supabase (no SDK dependency required)."""
 
-    def __init__(self, url: str = SUPABASE_URL, key: str = SUPABASE_KEY):
+    def __init__(self, url: str = "", key: str = ""):
+        # Env is read here, not at import time, so this module works no
+        # matter when it is imported relative to load_env().
+        url = url or os.getenv("SUPABASE_URL", "")
+        key = key or os.getenv("SUPABASE_SERVICE_KEY", "")  # service key for writes
         if not url or not key:
             raise ValueError(
                 "Set SUPABASE_URL and SUPABASE_SERVICE_KEY environment variables."
@@ -67,6 +67,21 @@ class SupabaseClient:
 
     def update(self, table: str, match: dict, data: dict) -> list:
         params = {k: f"eq.{v}" for k, v in match.items()}
+        r = httpx.patch(
+            f"{self.base}/{table}",
+            headers=self.headers,
+            params=params,
+            json=data,
+            timeout=15,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def update_in(self, table: str, column: str, values: list, data: dict) -> list:
+        """Bulk update every row whose `column` is in `values` (one PATCH)."""
+        if not values:
+            return []
+        params = {column: f"in.({','.join(str(v) for v in values)})"}
         r = httpx.patch(
             f"{self.base}/{table}",
             headers=self.headers,
