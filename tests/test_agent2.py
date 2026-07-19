@@ -16,6 +16,8 @@ def test_deduplicates_same_title_and_url():
 
 
 def test_ranking_and_memory_adapter(monkeypatch):
+    monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
+    monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
     agent = ResearchAgent()
     monkeypatch.setattr(agent, "fetch_reddit_signals", lambda: [signal("reddit", "NVIDIA AI agents", "https://reddit/a", 900)])
     monkeypatch.setattr(agent, "fetch_hn_signals", lambda: [signal("hacker_news", "NVIDIA AI agents", "https://hn/a", 500)])
@@ -31,6 +33,8 @@ def test_ranking_and_memory_adapter(monkeypatch):
 
 
 def test_source_failure_does_not_stop_run(monkeypatch):
+    monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
+    monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
     agent = ResearchAgent()
     monkeypatch.setattr(agent, "fetch_reddit_signals", lambda: (_ for _ in ()).throw(RuntimeError("rate limit")))
     monkeypatch.setattr(agent, "fetch_hn_signals", lambda: [signal("hacker_news", "Local LLM tools", "https://hn/a")])
@@ -81,14 +85,27 @@ def test_x_connector_maps_metrics_and_requires_token():
 
 def test_optional_social_source_failures_are_recorded(monkeypatch):
     monkeypatch.setenv("ENABLE_X", "true")
-    agent = ResearchAgent()
-    monkeypatch.setattr(agent, "fetch_youtube_signals", lambda: (_ for _ in ()).throw(RuntimeError("YOUTUBE_API_KEY is not configured")))
-    monkeypatch.setattr(agent, "fetch_x_signals", lambda: (_ for _ in ()).throw(RuntimeError("X_BEARER_TOKEN is not configured")))
+    agent = ResearchAgent(youtube_api_key="key", x_bearer_token="token")
+    monkeypatch.setattr(agent, "fetch_youtube_signals", lambda: (_ for _ in ()).throw(RuntimeError("quota exceeded")))
+    monkeypatch.setattr(agent, "fetch_x_signals", lambda: (_ for _ in ()).throw(RuntimeError("rate limit")))
     monkeypatch.setattr(agent, "fetch_hn_signals", lambda: [signal("hacker_news", "Local LLM tools", "https://hn/a")])
     for name in ("fetch_reddit_signals", "fetch_trends", "fetch_github_trending", "fetch_nvidia_news", "fetch_tavily_signals"):
         monkeypatch.setattr(agent, name, lambda: [])
     assert agent.get_opportunities(context())
     assert {"youtube", "x"} <= set(agent.last_result.source_errors)
+
+
+def test_unconfigured_sources_are_skipped_not_errored(monkeypatch):
+    for var in ("REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET", "TAVILY_API_KEY", "YOUTUBE_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    agent = ResearchAgent(tavily_api_key="", youtube_api_key="")
+    for name in ("fetch_reddit_signals", "fetch_tavily_signals", "fetch_youtube_signals"):
+        monkeypatch.setattr(agent, name, lambda: (_ for _ in ()).throw(AssertionError("unconfigured source should not be called")))
+    monkeypatch.setattr(agent, "fetch_hn_signals", lambda: [signal("hacker_news", "Local LLM tools", "https://hn/a")])
+    for name in ("fetch_trends", "fetch_github_trending", "fetch_nvidia_news"):
+        monkeypatch.setattr(agent, name, lambda: [])
+    assert agent.get_opportunities(context())
+    assert agent.last_result.source_errors == {}
 
 
 def test_x_is_disabled_by_default(monkeypatch):
